@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics;
 using System.Reflection;
+
 using NewLife;
 using NewLife.Agent;
 using NewLife.Log;
@@ -8,11 +9,13 @@ using NewLife.Reflection;
 using NewLife.Remoting;
 using NewLife.Remoting.Clients;
 using NewLife.Threading;
+
 using Stardust;
 using Stardust.Deployment;
 using Stardust.Managers;
 using Stardust.Models;
 using Stardust.Plugins;
+
 using IHost = NewLife.Agent.IHost;
 
 namespace StarAgent;
@@ -26,6 +29,7 @@ internal class Program
         Runtime.CreateConfigOnMissing = false;
 #endif
         XTrace.UseConsole();
+
 
         if ("-upgrade".EqualIgnoreCase(args))
         {
@@ -41,10 +45,12 @@ internal class Program
         var set = StarSetting.Current;
         if (set.IsNew)
         {
+            // 配置星尘。自动读取配置文件 config/star.config 中的服务器地址
 #if DEBUG
-            set.Server = "http://localhost:6600";
+            set.Server = string.Empty;
+#else
+            set.Server = "http://sm.vuz.cc:6668";
 #endif
-
             set.Save();
         }
 

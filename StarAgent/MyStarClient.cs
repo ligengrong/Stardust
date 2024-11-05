@@ -43,7 +43,7 @@ internal class MyStarClient : StarClient
         this.RegisterCommand("node/restart", Restart);
         this.RegisterCommand("node/reboot", Reboot);
         this.RegisterCommand("node/setchannel", SetChannel);
-
+        this.RegisterCommand("node/clearfolder", ClearFolder);//清除文件夹
         base.Open();
     }
 
@@ -112,6 +112,25 @@ internal class MyStarClient : StarClient
     #endregion
 
     #region 扩展功能
+    /// <summary>清除日志</summary>
+    /// <remarks>Iot\Web\wwwroot\admin\img;Iot\Web\wwwroot\admin\static</remarks>
+    String ClearFolder(String argument)
+    {
+        try
+        {
+            var args = argument.Split(";");
+            if (args is not null && 0 < args.Length)
+            {
+                foreach (var item in args)
+                {
+                    var dir = item.AsDirectory();
+                    if (dir.Exists) dir.Delete(true);
+                }
+            }
+        }
+        catch { }
+        return "success";
+    }
     /// <summary>重启应用服务</summary>
     private String Restart(String argument)
     {

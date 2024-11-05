@@ -68,29 +68,7 @@ public class StarAgentSetting : Config<StarAgentSetting>
     #region 方法
     protected override void OnLoaded()
     {
-        if (Services == null || Services.Length == 0)
-        {
-            var si = new ServiceInfo
-            {
-                Name = "test",
-                FileName = "ping",
-                Arguments = "newlifex.com",
-
-                Enable = false,
-            };
-            var si2 = new ServiceInfo
-            {
-                Name = "test2",
-                FileName = "cube.zip",
-                Arguments = "urls=http://*:1080",
-                WorkingDirectory = "../sso/web/",
-
-                Enable = false,
-            };
-
-            Services = new[] { si, si2 };
-        }
-
+        if (Services is null) Services = [];
         base.OnLoaded();
     }
     #endregion
