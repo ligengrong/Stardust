@@ -49,7 +49,7 @@ internal class Program
 #if DEBUG
             set.Server = string.Empty;
 #else
-            set.Server = "http://sm.vuz.cc:6668";
+            set.Server = "http://sm.vuz.cc:6600";
 #endif
             set.Save();
         }
