@@ -68,7 +68,7 @@ public class StarAgentSetting : Config<StarAgentSetting>
     #region 方法
     protected override void OnLoaded()
     {
-        if (Services is null) Services = [];
+        if (Services == null || Services.Length == 0) { Services = []; }
         base.OnLoaded();
     }
     #endregion
