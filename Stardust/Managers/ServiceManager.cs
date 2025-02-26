@@ -1,4 +1,5 @@
 ﻿using System.Net.Http;
+
 using NewLife;
 using NewLife.Http;
 using NewLife.IO;
@@ -7,6 +8,7 @@ using NewLife.Remoting.Clients;
 using NewLife.Remoting.Models;
 using NewLife.Serialization;
 using NewLife.Threading;
+
 using Stardust.Models;
 
 namespace Stardust.Managers;
@@ -495,7 +497,6 @@ public class ServiceManager : DisposeBase
         if (flag)
         {
             if (_client != null) url = _client.BuildUrl(url);
-
             WriteLog("下载[{0}]：{1} {2}", svc.Name, info.Version, url);
 
             // 先下载到临时目录，再整体拷贝，避免进程退出
@@ -505,7 +506,12 @@ public class ServiceManager : DisposeBase
             await http.DownloadFileAsync(url, tmp);
 
             WriteLog("下载完成，准备覆盖：{0}", dst.FullName);
-
+            if (info.Mode == DeployModes.Full) //如果是完整包，删除已经存的目录所有文件
+            {
+                var wd = svc.WorkingDirectory.AsDirectory();
+                if (wd.Exists) { wd.Delete(true); }
+                svc.WorkingDirectory.EnsureDirectory(false);
+            }
             // 校验哈希
             var ti = tmp.AsFile();
             var hash = ti.MD5().ToHex();
