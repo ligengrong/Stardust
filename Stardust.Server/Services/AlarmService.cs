@@ -83,7 +83,7 @@ public class AlarmService : IHostedService
         var onlines = NodeOnline.FindAll();
         foreach (var item in onlines)
         {
-            if (item.Node != null) ProcessNode(item.Node);
+            if (item.Node != null) ProcessNode(item.Node, item);
         }
 
         // Redis告警
@@ -432,7 +432,7 @@ public class AlarmService : IHostedService
     #endregion
 
     #region 节点告警
-    private void ProcessNode(Node node)
+    private void ProcessNode(Node node, NodeOnline nodeOnline = null)
     {
         if (node == null || !node.Enable) return;
 
@@ -482,18 +482,41 @@ public class AlarmService : IHostedService
         }
 
         // 磁盘告警
-        if (node.AlarmDiskRate > 0 && node.TotalSize > 0)
+        //if (node.AlarmDiskRate > 0 && node.TotalSize > 0)
+        //{
+        //    var rate = (node.TotalSize - data.AvailableFreeSpace) * 100d / node.TotalSize;
+        //    if (rate >= node.AlarmDiskRate)
+        //    {
+        //        // 一定时间内不要重复报错，除非错误翻倍
+        //        var error2 = _cache.Get<Double>("alarm:DiskRate:" + node.ID);
+        //        if (error2 == 0 || rate > error2 * 2)
+        //        {
+        //            _cache.Set("alarm:DiskRate:" + node.ID, rate, 5 * 60);
+
+        //            SendAlarm("disk", node, data, $"[{node.Name}]磁盘告警");
+        //        }
+        //    }
+        //}
+        //服务器全磁盘警告
+        if (nodeOnline is not null && node.AlarmDiskRate > 0 && node.TotalSize > 0)
         {
-            var rate = (node.TotalSize - data.AvailableFreeSpace) * 100d / node.TotalSize;
-            if (rate >= node.AlarmDiskRate)
+            var drives = nodeOnline.DriveInfo.Split(",").Select(o => o.Split(":")[0]).ToList();
+            var sb = new StringBuilder();
+            foreach (var d in drives)
+            {
+                var rates = d.Split('_');
+                if (rates.Length != 2) { continue; }
+                var rate = rates[0].ToDouble();
+                if (rate >= node.AlarmDiskRate) { sb.AppendLine($">**{rates[1]}磁盘使用率：**<font color=\"red\"> {rate / 100d:p0} >= {node.AlarmDiskRate / 100d:p0}</font>"); }
+            }
+            if (sb.Length > 0)
             {
                 // 一定时间内不要重复报错，除非错误翻倍
-                var error2 = _cache.Get<Double>("alarm:DiskRate:" + node.ID);
-                if (error2 == 0 || rate > error2 * 2)
+                var error2 = _cache.Get<Double>("alarm:AllDiskRate:" + node.ID);
+                if (error2 == 0)
                 {
-                    _cache.Set("alarm:DiskRate:" + node.ID, rate, 5 * 60);
-
-                    SendAlarm("disk", node, data, $"[{node.Name}]磁盘告警");
+                    _cache.Set("alarm:AllDiskRate:" + node.ID, node.AlarmDiskRate, 5 * 60);
+                    SendAlarm("alldisk", node, data, $"[{node.Name}]磁盘告警", sb.ToString());
                 }
             }
         }
@@ -576,6 +599,7 @@ public class AlarmService : IHostedService
                 var rate2 = 1 - (node.TotalSize == 0 ? 0 : ((Double)data.AvailableFreeSpace / node.TotalSize));
                 sb.AppendLine($">**磁盘使用率：**<font color=\"red\"> {rate2:p0} >= {node.AlarmDiskRate / 100d:p0}</font>");
                 break;
+            case "alldisk": sb.AppendLine(msg); break;//服务器全磁盘警告
             case "tcp":
                 if (data.TcpConnections >= node.AlarmTcp)
                     sb.AppendLine($">**TCP连接数：**<font color=\"red\">{data.TcpConnections:n0} >= {node.AlarmTcp:n0}</font>");

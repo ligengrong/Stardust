@@ -312,7 +312,7 @@ public class StarClient : ClientBase, ICommandClient, IEventProvider
         var drives = GetDrives();
 
         request.IP = AgentInfo.GetIps();
-        request.DriveInfo = drives.Join(",", e => $"{e.Name}[{e.DriveFormat}]={e.AvailableFreeSpace.ToGMK()}/{e.TotalSize.ToGMK()}");
+        request.DriveInfo = drives.Join(",", e => $"{Math.Round((double)(e.TotalSize - e.AvailableFreeSpace) / e.TotalSize * 100, 2)}_{e.Name}-{(e.TotalSize - e.AvailableFreeSpace) / e.TotalSize * 100}_[{e.DriveFormat}]={e.AvailableFreeSpace.ToGMK()}/{e.TotalSize.ToGMK()}");
         request.Macs = (String?)NetHelper.GetMacs().Select(e => e.ToHex("-")).OrderBy(e => e).Join(",");
         request.ProcessCount = ps.Length;
         request.Processes = pcs.Join();
