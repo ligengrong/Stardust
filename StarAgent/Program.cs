@@ -3,6 +3,7 @@ using System.Reflection;
 
 using NewLife;
 using NewLife.Agent;
+using NewLife.Agent.Models;
 using NewLife.Log;
 using NewLife.Model;
 using NewLife.Reflection;
@@ -17,6 +18,7 @@ using Stardust.Models;
 using Stardust.Plugins;
 
 using IHost = NewLife.Agent.IHost;
+using ServiceModel = NewLife.Agent.Models.ServiceModel;
 
 namespace StarAgent;
 
@@ -153,41 +155,51 @@ internal class MyService : ServiceBase, IServiceProvider
             set.OOMScoreAdjust = -1000;
 
             // 检查并修正旧版KillMode
-            FixKillMode(set);
+            FixSystemdService(set);
         }
     }
 
-    private void FixKillMode(SystemdSetting set)
+    private void FixSystemdService(SystemdSetting set)
     {
-        var servicePath = typeof(Systemd).GetValue("ServicePath") as String;
-        if (!servicePath.IsNullOrEmpty())
+        var servicePath = Systemd.ServicePath;
+        if (servicePath.IsNullOrEmpty()) return;
+
+        var file = servicePath.CombinePath($"{set.ServiceName}.service");
+        if (!File.Exists(file)) return;
+
+        var txt = File.ReadAllText(file);
+        if (!txt.IsNullOrEmpty() && txt.Contains("KillMode") && txt.Contains("StarAgent")) return;
+
+        WriteLog("旧版service文件，修正KillMode");
+
+        var exe = Process.GetCurrentProcess().MainModule.FileName;
+
+        // 兼容dotnet
+        var args = Environment.GetCommandLineArgs();
+        if (args.Length >= 1)
         {
-            var file = servicePath.CombinePath($"{set.ServiceName}.service");
-            if (File.Exists(file) && !File.ReadAllText(file).Contains("KillMode"))
-            {
-                WriteLog("旧版service文件，修正KillMode");
+            var fileName = Path.GetFileName(exe);
+            if (exe.Contains(' ')) exe = $"\"{exe}\"";
 
-                var exe = Process.GetCurrentProcess().MainModule.FileName;
+            var dll = args[0].GetFullPath();
+            if (dll.Contains(' ')) dll = $"\"{dll}\"";
 
-                // 兼容dotnet
-                var args = Environment.GetCommandLineArgs();
-                if (args.Length >= 1)
-                {
-                    var fileName = Path.GetFileName(exe);
-                    if (exe.Contains(' ')) exe = $"\"{exe}\"";
-
-                    var dll = args[0].GetFullPath();
-                    if (dll.Contains(' ')) dll = $"\"{dll}\"";
-
-                    if (fileName.EqualIgnoreCase("dotnet", "dotnet.exe"))
-                        exe += " " + dll;
-                    else if (fileName.EqualIgnoreCase("mono", "mono.exe", "mono-sgen"))
-                        exe = dll;
-                }
-
-                Host.Install(ServiceName, DisplayName, exe, "-s", Description);
-            }
+            if (fileName.EqualIgnoreCase("dotnet", "dotnet.exe"))
+                exe += " " + dll;
+            else if (fileName.EqualIgnoreCase("mono", "mono.exe", "mono-sgen"))
+                exe = dll;
         }
+
+        var service = new ServiceModel
+        {
+            ServiceName = ServiceName,
+            DisplayName = DisplayName,
+            Description = Description,
+            FileName = exe,
+            Arguments = "-s",
+        };
+
+        Host.Install(service);
     }
     #endregion
 

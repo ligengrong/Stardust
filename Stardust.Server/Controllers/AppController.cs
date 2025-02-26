@@ -1,6 +1,5 @@
 ﻿using System.Net;
 using System.Net.WebSockets;
-using System.Xml.Linq;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using NewLife;
@@ -13,7 +12,6 @@ using NewLife.Security;
 using NewLife.Serialization;
 using Stardust.Data;
 using Stardust.Data.Configs;
-using Stardust.Data.Nodes;
 using Stardust.Models;
 using Stardust.Server.Services;
 using WebSocket = System.Net.WebSockets.WebSocket;
@@ -125,7 +123,9 @@ public class AppController : BaseController
             ServerTime = DateTime.UtcNow.ToLong(),
         };
 
-        var online = _registryService.Ping(app, inf, UserHost, _clientId, Token);
+        var ip = UserHost;
+        var online = _registryService.Ping(app, inf, ip, _clientId, Token);
+        AppMeter.WriteData(app, inf, "Ping", _clientId, ip);
         _deployService.UpdateDeployNode(online);
 
         if (app != null)
@@ -262,7 +262,7 @@ public class AppController : BaseController
                     var msg = JsonHelper.Convert<CommandModel>(dic);
                     span.Detach(dic);
 
-                    if (msg == null || msg.Id == 0 || msg.Expire.Year > 2000 && msg.Expire < DateTime.Now)
+                    if (msg == null || msg.Id == 0 || msg.Expire.Year > 2000 && msg.Expire < DateTime.UtcNow)
                     {
                         WriteHistory("WebSocket发送", false, "消息无效或已过期。" + mqMsg, clientId, ip);
 

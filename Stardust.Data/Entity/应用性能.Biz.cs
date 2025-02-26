@@ -29,6 +29,11 @@ public partial class AppMeter : Entity<AppMeter>
         // 过滤器 UserModule、TimeModule、IPModule
         Meta.Modules.Add<TimeModule>();
         Meta.Modules.Add<IPModule>();
+
+        // 针对Mysql启用压缩表
+        var table = Meta.Table.DataTable;
+        table.Properties["ROW_FORMAT"] = "COMPRESSED";
+        table.Properties["KEY_BLOCK_SIZE"] = "4";
     }
 
     /// <summary>验证并修补数据，通过抛出异常的方式提示验证失败。</summary>
@@ -175,15 +180,18 @@ public partial class AppMeter : Entity<AppMeter>
             Source = source,
 
             Memory = (Int32)(info.WorkingSet / 1024 / 1024),
-            ProcessorTime = info.ProcessorTime,
+            ProcessorTime = (Int32)(info.ProcessorTime / 1000),
             CpuUsage = Math.Round(info.CpuUsage, 4),
             Threads = info.Threads,
             WorkerThreads = info.WorkerThreads,
             IOThreads = info.IOThreads,
+            AvailableThreads = info.AvailableThreads,
+            PendingItems = info.PendingItems,
+            CompletedItems = info.CompletedItems,
             Handles = info.Handles,
             Connections = info.Connections,
-            GCPause = Math.Round(info.GCPause, 4),
-            FullGC = info.FullGC,
+            HeapSize = (Int32)(info.HeapSize / 1024 / 1024),
+            GCCount = info.GCCount,
             Time = dt,
 
             //Data = info.ToJson(),

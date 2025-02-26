@@ -62,6 +62,8 @@ public class StarTracer : DefaultTracer
 
         if (set.Debug) Log = XTrace.Log;
 
+        Resolver = new StarTracerResolver();
+
         try
         {
             var executing = AssemblyX.Create(Assembly.GetExecutingAssembly());
@@ -125,8 +127,8 @@ public class StarTracer : DefaultTracer
         var client = Client;
         if (client == null) return;
 
-        // 构建应用信息
-        if (EnableMeter)
+        // 构建应用信息。如果应用心跳已存在，则监控上报时不需要携带应用性能信息
+        if (EnableMeter && Client is not ClientBase)
         {
             if (_appInfo == null)
                 _appInfo = new AppInfo(_process) { Version = _version };
@@ -170,6 +172,12 @@ public class StarTracer : DefaultTracer
                 if (rs.MaxTagLength > 0) MaxTagLength = rs.MaxTagLength;
                 if (rs.EnableMeter != null) EnableMeter = rs.EnableMeter.Value;
                 Excludes = rs.Excludes;
+
+                if (Resolver is StarTracerResolver resolver && rs.RequestTagLength != 0)
+                {
+                    resolver.RequestContentAsTag = rs.RequestTagLength > 0;
+                    resolver.RequestTagLength = rs.RequestTagLength;
+                }
 
                 // 保存到配置文件
                 if (rs.Period > 0 || rs.MaxSamples > 0 || rs.MaxErrors > 0)

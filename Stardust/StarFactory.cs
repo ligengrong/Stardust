@@ -184,7 +184,7 @@ public class StarFactory : DisposeBase
                 if (!server.IsNullOrEmpty())
                 {
                     if (Server.IsNullOrEmpty()) Server = server;
-                    XTrace.WriteLine("星尘探测：{0} Cost={1}ms", server, sw.ElapsedMilliseconds);
+                    XTrace.WriteLine("本机星尘探测：{0} Cost={1}ms", server, sw.ElapsedMilliseconds);
 
                     if (set.Server.IsNullOrEmpty())
                     {
@@ -193,7 +193,7 @@ public class StarFactory : DisposeBase
                     }
                 }
                 else
-                    XTrace.WriteLine("星尘探测：StarAgent Not Found, Cost={0}ms", sw.ElapsedMilliseconds);
+                    XTrace.WriteLine("本机星尘探测：StarAgent Not Found, Cost={0}ms", sw.ElapsedMilliseconds);
 
                 if (inf != null && !inf.PluginServer.IsNullOrEmpty() && !AppId.EqualIgnoreCase("StarWeb", "StarServer"))
                 {
@@ -208,7 +208,7 @@ public class StarFactory : DisposeBase
             }
             catch (Exception ex)
             {
-                XTrace.Log.Error("星尘探测失败！{0} Cost={1}ms", ex.Message, sw.ElapsedMilliseconds);
+                XTrace.Log.Error("本机星尘探测失败！{0} Cost={1}ms", ex.Message, sw.ElapsedMilliseconds);
             }
         }
 
@@ -242,7 +242,7 @@ public class StarFactory : DisposeBase
             ClientId = Rand.NextString(8);
         }
 
-        XTrace.WriteLine("星尘分布式服务 Server={0} AppId={1} ClientId={2}", Server, AppId, ClientId);
+        XTrace.WriteLine("接入星尘平台：Server={0} AppId={1} ClientId={2}", Server, AppId, ClientId);
 
         Valid();
     }
@@ -254,6 +254,8 @@ public class StarFactory : DisposeBase
         container.AddSingleton(this);
         container.AddSingleton(p => Tracer ?? DefaultTracer.Instance ?? (DefaultTracer.Instance ??= new DefaultTracer()));
         container.AddSingleton(p => Service!);
+        container.AddSingleton(p => (p.GetService<IRegistry>() as IEventProvider)!);
+        container.AddSingleton(p => (p.GetService<IRegistry>() as ICommandClient)!);
 
         // 替换为混合配置提供者，优先本地配置
         container.AddSingleton(p => GetConfig()!);
@@ -327,7 +329,7 @@ public class StarFactory : DisposeBase
     {
         if (Server.IsNullOrEmpty()) return;
 
-        XTrace.WriteLine("星尘监控中心：采样并定期上报应用性能埋点数据，包括Api接口、Http请求、数据库操作、Redis操作等。可用于监控系统健康状态，分析分布式系统的性能瓶颈。");
+        XTrace.WriteLine("星尘监控中心：ITracer采集并上报应用埋点数据，自动埋点Api接口、Http请求、数据库操作、Redis操作等。可用于监控系统健康状态，分析分布式系统的调用链和性能瓶颈。");
 
         var tracer = new StarTracer(Server)
         {
@@ -358,7 +360,7 @@ public class StarFactory : DisposeBase
             {
                 if (!Valid()) return null;
 
-                XTrace.WriteLine("星尘配置中心：提供集中配置管理能力，自动从配置中心加载配置数据，包括XCode数据库连接。配置中心同时支持分配应用实例的唯一WorkerId，确保Snowflake算法能够生成绝对唯一的雪花Id");
+                XTrace.WriteLine("星尘配置中心：IConfigProvider集中管理配置，自动从配置中心加载配置数据并支持变更实时下发，包括XCode数据库连接字符串等。配置中心同时支持分配应用实例的唯一WorkerId，确保Snowflake算法能够生成绝对唯一的雪花Id");
 
                 var config = new StarHttpConfigProvider
                 {
@@ -418,7 +420,7 @@ public class StarFactory : DisposeBase
                 _initService = true;
                 //_appClient = _client as AppClient;
 
-                XTrace.WriteLine("星尘注册中心：提供服务注册与发布能力");
+                XTrace.WriteLine("星尘注册中心：IRegistry提供服务发现能力，可根据服务名自动获取所有提供者的节点地址，并创建调用服务的IApiClient客户端，并根据服务提供者的上线与下线自动新增或减少服务地址。");
             }
 
             return _client;
@@ -429,7 +431,7 @@ public class StarFactory : DisposeBase
     /// <param name="serviceName"></param>
     /// <param name="tag"></param>
     /// <returns></returns>
-    public IApiClient CreateForService(String serviceName, String? tag = null) => TaskEx.Run(() => CreateForServiceAsync(serviceName, tag)).Result;
+    public IApiClient CreateForService(String serviceName, String? tag = null) => TaskEx.Run(() => CreateForServiceAsync(serviceName, tag)).ConfigureAwait(false).GetAwaiter().GetResult();
 
     /// <summary>为指定服务创建客户端，从星尘注册中心获取服务地址。单例，应避免频繁创建客户端</summary>
     /// <param name="serviceName"></param>
@@ -462,11 +464,11 @@ public class StarFactory : DisposeBase
     /// <param name="expire"></param>
     /// <param name="timeout"></param>
     /// <returns></returns>
-    public async Task<Int32> SendNodeCommand(String nodeCode, String command, String? argument = null, Int32 startTime = 0, Int32 expire = 3600, Int32 timeout = 5)
+    public Task<Int32> SendNodeCommand(String nodeCode, String command, String? argument = null, Int32 startTime = 0, Int32 expire = 3600, Int32 timeout = 5)
     {
-        if (!Valid()) return -1;
+        if (!Valid()) return Task.FromResult(-1);
 
-        return await _client.InvokeAsync<Int32>("Node/SendCommand", new CommandInModel
+        return _client.InvokeAsync<Int32>("Node/SendCommand", new CommandInModel
         {
             Code = nodeCode,
             Command = command,
@@ -485,11 +487,11 @@ public class StarFactory : DisposeBase
     /// <param name="expire"></param>
     /// <param name="timeout"></param>
     /// <returns></returns>
-    public async Task<Int32> SendAppCommand(String appId, String command, String? argument = null, Int32 startTime = 0, Int32 expire = 3600, Int32 timeout = 5)
+    public Task<Int32> SendAppCommand(String appId, String command, String? argument = null, Int32 startTime = 0, Int32 expire = 3600, Int32 timeout = 5)
     {
-        if (!Valid()) return -1;
+        if (!Valid()) return Task.FromResult(-1);
 
-        return await _client.InvokeAsync<Int32>("App/SendCommand", new CommandInModel
+        return _client.InvokeAsync<Int32>("App/SendCommand", new CommandInModel
         {
             Code = appId,
             Command = command,

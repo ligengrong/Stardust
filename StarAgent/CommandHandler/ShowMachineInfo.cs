@@ -32,7 +32,7 @@ public class ShowMachineInfo : BaseCommandHandler
         XTrace.WriteLine("BasePath:{0}", ".".GetBasePath());
         XTrace.WriteLine("TempPath:{0}", Path.GetTempPath());
 
-        var mi = MachineInfo.Current ?? MachineInfo.RegisterAsync().Result;
+        var mi = MachineInfo.GetCurrent();
         mi.Refresh();
         var pis = mi.GetType().GetProperties(true);
 
@@ -85,7 +85,7 @@ public class ShowMachineInfo : BaseCommandHandler
             var ipp = item.GetIPProperties();
             if (ipp != null && ipp.UnicastAddresses.Any(e => e.Address.IsIPv4()))
             {
-                XTrace.WriteLine("\tIP:\t{0}", ipp.UnicastAddresses.Where(e => e.Address.IsIPv4()).Join(",", e => e.Address));
+                XTrace.WriteLine("\tIP:\t{0}", ipp.UnicastAddresses.Where(e => e.Address.IsIPv4()).Select(e => e.Address + "").Distinct().Join(","));
                 if (ipp.GatewayAddresses.Any(e => e.Address.IsIPv4()))
                     XTrace.WriteLine("\tGateway:{0}", ipp.GatewayAddresses.Where(e => e.Address.IsIPv4()).Join(",", e => e.Address));
                 if (ipp.DnsAddresses.Any(e => e.IsIPv4()))

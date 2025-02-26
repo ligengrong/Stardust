@@ -1,6 +1,7 @@
 ﻿using System.IO.Compression;
 using Microsoft.AspNetCore.Mvc;
 using NewLife;
+using NewLife.Collections;
 using NewLife.Log;
 using NewLife.Remoting.Extensions;
 using NewLife.Serialization;
@@ -20,13 +21,14 @@ public class TraceController : ControllerBase
     private readonly TokenService _tokenService;
     private readonly AppOnlineService _appOnline;
     private readonly UplinkService _uplink;
+    private readonly MonitorService _monitorService;
     private readonly StarServerSetting _setting;
     private readonly ITracer _tracer;
     private readonly ITraceStatService _stat;
     private readonly IAppDayStatService _appStat;
     private readonly ITraceItemStatService _itemStat;
 
-    public TraceController(ITraceStatService stat, IAppDayStatService appStat, ITraceItemStatService itemStat, TokenService tokenService, AppOnlineService appOnline, UplinkService uplink, StarServerSetting setting, ITracer tracer)
+    public TraceController(ITraceStatService stat, IAppDayStatService appStat, ITraceItemStatService itemStat, TokenService tokenService, AppOnlineService appOnline, UplinkService uplink, MonitorService monitorService, StarServerSetting setting, ITracer tracer)
     {
         _stat = stat;
         _appStat = appStat;
@@ -34,6 +36,7 @@ public class TraceController : ControllerBase
         _tokenService = tokenService;
         _appOnline = appOnline;
         _uplink = uplink;
+        _monitorService = monitorService;
         _setting = setting;
         _tracer = tracer;
     }
@@ -48,7 +51,7 @@ public class TraceController : ControllerBase
         var ip = HttpContext.GetUserHost();
         if (ip.IsNullOrEmpty()) ip = ManageProvider.UserHost;
 
-        using var span = _tracer?.NewSpan($"traceReport-{model.AppId}", new { ip, model.ClientId, count = model.Builders?.Length, names = model.Builders?.Join(",", e => e.Name) });
+        using var span = _tracer?.NewSpan($"traceReport-{model.AppId}", new { ip, model.ClientId, count = model.Builders?.Length, names = model.Builders?.Join(",", e => e.Name) }, builders?.Length ?? 0);
 
         // 验证
         var (app, online) = Valid(model.AppId, model, model.ClientId, ip, token);
@@ -66,6 +69,7 @@ public class TraceController : ControllerBase
             Timeout = app.Timeout,
             //Excludes = app.Excludes?.Split(",", ";"),
             MaxTagLength = app.MaxTagLength,
+            RequestTagLength = app.RequestTagLength,
             EnableMeter = app.EnableMeter,
         };
 
@@ -89,7 +93,7 @@ public class TraceController : ControllerBase
         var req = Request;
         if (req.ContentLength <= 0) return null;
 
-        var ms = new MemoryStream();
+        var ms = Pool.MemoryStream.Get();
         if (req.ContentType == "application/x-gzip")
         {
             using var gs = new GZipStream(req.Body, CompressionMode.Decompress);
@@ -101,7 +105,7 @@ public class TraceController : ControllerBase
         }
 
         ms.Position = 0;
-        var body = ms.ToStr();
+        var body = ms.Return(true).ToStr();
         var model = body.ToJsonEntity<TraceModel>();
 
         return Report(model, token);
@@ -307,7 +311,10 @@ public class TraceController : ControllerBase
             _itemStat.Add(app.ID);
 
             // 发送给上联服务器
-            _uplink.Report(model);
+            _uplink.Report(app, model);
+
+            // WebHook
+            if (!app.WebHook.IsNullOrEmpty()) _monitorService.WebHook(app, model);
         }
         catch (Exception ex)
         {

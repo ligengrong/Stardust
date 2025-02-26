@@ -6,8 +6,8 @@
     <AssemblyTitle>星尘分布式服务扩展</AssemblyTitle>
     <Description>星尘，分布式服务框架扩展。节点管理，监控中心，配置中心，发布中心，注册中心</Description>
     <Company>新生命开发团队</Company>
-    <Copyright>©2002-2024 NewLife</Copyright>
-    <VersionPrefix>3.2</VersionPrefix>
+    <Copyright>©2002-2025 NewLife</Copyright>
+    <VersionPrefix>3.3</VersionPrefix>
     <VersionSuffix>$([System.DateTime]::Now.ToString(`yyyy.MMdd`))</VersionSuffix>
     <Version>$(VersionPrefix).$(VersionSuffix)</Version>
     <FileVersion>$(Version)</FileVersion>
@@ -20,6 +20,8 @@
     <SignAssembly>True</SignAssembly>
     <AssemblyOriginatorKeyFile>..\Doc\newlife.snk</AssemblyOriginatorKeyFile>
     <NoWarn>1701;1702;NU5104;NETSDK1138;CS7035</NoWarn>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <WarningsAsErrors>CA2007</WarningsAsErrors>
   </PropertyGroup>
 
   <PropertyGroup>

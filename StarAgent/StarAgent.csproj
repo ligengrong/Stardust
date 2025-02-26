@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <OutputPath>..\Bin\Agent</OutputPath>
@@ -51,7 +51,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="NewLife.Agent" Version="10.10.2024.1116" />
+    <PackageReference Include="NewLife.Agent" Version="10.11.2025.201" />
   </ItemGroup>
 
   <ItemGroup>

@@ -107,7 +107,7 @@ class CacheFileProvider : IFileProvider
         if (Path.GetFileName(fullPath).Contains('.'))
         {
             if (!fi.Exists)
-                fi = DownloadFile(subpath, fullPath).Result?.AsFile();
+                fi = DownloadFile(subpath, fullPath).ConfigureAwait(false).GetAwaiter().GetResult()?.AsFile();
             else if (fi.LastWriteTime.AddMonths(1) < DateTime.Now)
                 _ = Task.Run(() => DownloadFile(subpath, fullPath));
         }
@@ -138,7 +138,7 @@ class CacheFileProvider : IFileProvider
                     {
                         using var fs = new FileStream(tmp, FileMode.OpenOrCreate);
                         using var client = new HttpClient { Timeout = Timeout };
-                        using var rs = await client.GetStreamAsync(url);
+                        using var rs = await client.GetStreamAsync(url).ConfigureAwait(false);
                         rs.CopyTo(fs);
                         fs.Flush();
                         fs.SetLength(fs.Position);
@@ -219,7 +219,7 @@ class CacheFileProvider : IFileProvider
             {
                 var fi = fullPath.CombinePath(IndexInfoFile).GetBasePath().AsFile();
                 if (!fi.Exists)
-                    fi = DownloadDirectory(subpath, fi.FullName, svrs).Result?.AsFile();
+                    fi = DownloadDirectory(subpath, fi.FullName, svrs).ConfigureAwait(false).GetAwaiter().GetResult()?.AsFile();
                 else if (fi.LastWriteTime.AddDays(1) < DateTime.Now)
                     _ = Task.Run(() => DownloadDirectory(subpath, fi.FullName, svrs));
             }
@@ -236,6 +236,7 @@ class CacheFileProvider : IFileProvider
 
     async Task<String?> DownloadDirectory(String subpath, String fullPath, String[] svrs)
     {
+        subpath = subpath.TrimEnd('/');
         var span = DefaultSpan.Current;
         foreach (var item in svrs)
         {
@@ -248,7 +249,7 @@ class CacheFileProvider : IFileProvider
                 XTrace.WriteLine("下载目录：{0}", url);
 
                 using var client = new HttpClient { Timeout = Timeout };
-                var html = await client.GetStringAsync(url);
+                var html = await client.GetStringAsync(url).ConfigureAwait(false);
 
                 var links = Link.Parse(html, url);
                 var list = links.Select(e => new FileInfoModel
@@ -256,7 +257,7 @@ class CacheFileProvider : IFileProvider
                     Name = HttpUtility.UrlDecode(e.FullName + ""),
                     LastModified = e.Time.Year > 2000 ? e.Time : DateTime.Now,
                     Exists = true,
-                    IsDirectory = false,
+                    IsDirectory = e.Hash.IsNullOrEmpty(),
                 }).ToList();
 
                 var csv = new CsvDb<FileInfoModel> { FileName = fullPath };

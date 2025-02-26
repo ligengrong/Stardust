@@ -10,7 +10,6 @@ using NewLife;
 using NewLife.Data;
 using XCode;
 using XCode.Cache;
-using XCode.Membership;
 
 namespace Stardust.Data.Monitors;
 
@@ -71,6 +70,7 @@ public partial class AppTracer : Entity<AppTracer>
             if (!Dirtys[nameof(MaxErrors)]) MaxErrors = 10;
             if (!Dirtys[nameof(Timeout)]) Timeout = 5000;
             if (!Dirtys[nameof(MaxTagLength)]) MaxTagLength = 1024;
+            if (!Dirtys[nameof(RequestTagLength)]) RequestTagLength = 1024;
             if (!Dirtys[nameof(EnableMeter)]) EnableMeter = true;
         }
         else
@@ -149,7 +149,7 @@ public partial class AppTracer : Entity<AppTracer>
     /// <returns>实体列表</returns>
     public static IList<AppTracer> FindAllByAppId(Int32 appId)
     {
-        if (appId <= 0) return new List<AppTracer>();
+        if (appId <= 0) return [];
 
         // 实体缓存
         if (Meta.Session.Count < 1000) return Meta.Cache.FindAll(e => e.AppId == appId);
@@ -162,7 +162,7 @@ public partial class AppTracer : Entity<AppTracer>
     /// <returns>实体列表</returns>
     public static IList<AppTracer> FindAllByProjectId(Int32 projectId)
     {
-        if (projectId <= 0) return new List<AppTracer>();
+        if (projectId <= 0) return [];
 
         // 实体缓存
         if (Meta.Session.Count < 1000) return Meta.Cache.FindAll(e => e.ProjectId == projectId);
@@ -197,7 +197,7 @@ public partial class AppTracer : Entity<AppTracer>
     }
 
     // Select Count(ID) as ID,Category From AppTracer Where CreateTime>'2020-01-24 00:00:00' Group By Category Order By ID Desc limit 20
-    static readonly FieldCache<AppTracer> _CategoryCache = new FieldCache<AppTracer>(nameof(Category));
+    static readonly FieldCache<AppTracer> _CategoryCache = new(nameof(Category));
 
     /// <summary>获取类别列表，字段缓存10分钟，分组统计数据最多的前20种，用于魔方前台下拉选择</summary>
     /// <returns></returns>

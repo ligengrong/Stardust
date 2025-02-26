@@ -119,6 +119,16 @@ public class ServiceManager : DisposeBase
         return count;
     }
 
+    /// <summary>根据进程查找应用服务控制器</summary>
+    /// <param name="processId"></param>
+    /// <returns></returns>
+    public ServiceController QueryByProcess(Int32 processId)
+    {
+        if (processId <= 0) return null;
+
+        return _controllers.FirstOrDefault(e => e.ProcessId == processId);
+    }
+
     /// <summary>开始管理，拉起应用进程</summary>
     public void Start()
     {
@@ -372,7 +382,7 @@ public class ServiceManager : DisposeBase
         await _client.UploadDeploy(svcs);
     }
 
-    private async Task<DeployInfo[]?> PullService(String? appName)
+    private async Task<DeployInfo[]?> PullService(Int32 deployId, String? appName)
     {
         if (Services == null) return null;
         if (_client == null) return null;
@@ -385,15 +395,29 @@ public class ServiceManager : DisposeBase
         var rs = await _client.GetDeploy();
         if (rs == null) return null;
 
-        // 过滤应用
-        if (!appName.IsNullOrEmpty()) rs = rs.Where(e => e.Name.EqualIgnoreCase(appName)).ToArray();
+        // 数据修正，特别是部署名
+        foreach (var deploy in rs)
+        {
+            var svc = deploy.Service ??= new ServiceInfo();
+            if (svc.Name.IsNullOrEmpty())
+                svc.Name = deploy.Name;
+        }
 
-        WriteLog("取得应用服务：{0}", rs.Join(",", e => e.Name));
-        WriteLog("可用：{0}", rs.Where(e => e.Service != null && e.Service.Enable).Join(",", e => e.Name));
-        if (rs.Length > 0) WriteLog(rs.ToJson(true));
+        // 过滤应用
+        if (deployId > 0 && rs.All(e => e.Id > 0))
+            rs = rs.Where(e => e.Id == deployId).ToArray();
+        else if (!appName.IsNullOrEmpty())
+            rs = rs.Where(e => e.Service.Name.EqualIgnoreCase(appName)).ToArray();
+
+        if (rs.Length > 0)
+        {
+            WriteLog("取得应用服务：{0}", rs.Join(",", e => e.Service.Name));
+            WriteLog("可用：{0}", rs.Where(e => e.Service != null && e.Service.Enable).Join(",", e => e.Service.Name));
+            WriteLog(rs.ToJson(true));
+        }
 
         // 旧版服务
-        span?.AppendTag(svcs);
+        span?.AppendTag("旧版服务：" + svcs?.Select(e => e.Name).ToList());
 
         // 合并
         foreach (var item in rs)
@@ -401,14 +425,17 @@ public class ServiceManager : DisposeBase
             var svc = item.Service;
             if (svc == null || svc.Name.IsNullOrEmpty()) continue;
 
+            // 外层应用名，内层部署名。主要用于单应用多部署场景
+            var deployName = svc.Name;
+
             // 下载文件到工作目录
             Fix(svc);
             if (svc.Enable && !item.Url.IsNullOrEmpty()) await Download(item, svc);
 
-            var old = svcs.FirstOrDefault(e => e.Name.EqualIgnoreCase(item.Name));
+            var old = svcs.FirstOrDefault(e => e.Name.EqualIgnoreCase(deployName));
             if (old == null)
             {
-                WriteLog("新增[{0}]：Enable={1}", item.Name, svc.Enable);
+                WriteLog("新增[{0}]：Enable={1}", deployName, svc.Enable);
 
                 old = svc;
                 //svc.ReloadOnChange = true;
@@ -418,9 +445,9 @@ public class ServiceManager : DisposeBase
             else
             {
                 if (!old.Enable && svc.Enable)
-                    WriteLog("启用[{0}]", item.Name);
+                    WriteLog("启用[{0}]", deployName);
                 else if (old.Enable && !svc.Enable)
-                    WriteLog("禁用[{0}]", item.Name);
+                    WriteLog("禁用[{0}]", deployName);
 
                 old.FileName = svc.FileName;
                 old.Arguments = svc.Arguments;
@@ -572,7 +599,7 @@ public class ServiceManager : DisposeBase
 
                 if (_status == 1)
                 {
-                    deploys = await PullService(null);
+                    deploys = await PullService(-1, null);
 
                     _status = 2;
                 }
@@ -612,11 +639,11 @@ public class ServiceManager : DisposeBase
         }
 
         // 检查并启动服务
-        foreach (var item in svcs)
+        foreach (var svc in svcs)
         {
-            if (item != null && item.Enable)
+            if (svc != null && svc.Enable)
             {
-                changed |= StartService(item, deploys?.FirstOrDefault(e => e.Name == item.Name), true);
+                changed |= StartService(svc, deploys?.FirstOrDefault(e => e.Service.Name == svc.Name), true);
             }
         }
 
@@ -721,8 +748,8 @@ public class ServiceManager : DisposeBase
 
         var changed = cmd.Command switch
         {
-            "deploy/publish" => OnInstall(serviceName, cmd),
-            "deploy/install" => OnInstall(serviceName, cmd),
+            "deploy/publish" => OnInstall(my.Id, serviceName, cmd),
+            "deploy/install" => OnInstall(my.Id, serviceName, cmd),
             "deploy/start" => OnStart(serviceName, cmd),
             "deploy/stop" => OnStop(serviceName, cmd),
             "deploy/restart" => OnRestart(serviceName, cmd),
@@ -745,11 +772,11 @@ public class ServiceManager : DisposeBase
         public String? AppName { get; set; }
     }
 
-    Boolean OnInstall(String serviceName, CommandModel cmd)
+    Boolean OnInstall(Int32 deployId, String serviceName, CommandModel cmd)
     {
         using var span = Tracer?.NewSpan("ServiceManager-Install", cmd);
 
-        var dis = PullService(serviceName).Result;
+        var dis = PullService(deployId, serviceName).ConfigureAwait(false).GetAwaiter().GetResult();
         if (dis == null || dis.Length == 0) throw new Exception($"无法从服务器取得应用信息，安装{serviceName}失败！");
 
         // 马上停止并拉起应用服务，定时器只用于双保险

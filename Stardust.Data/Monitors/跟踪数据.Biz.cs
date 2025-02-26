@@ -22,7 +22,7 @@ public partial class TraceData : Entity<TraceData>
         Meta.ShardPolicy = new TimeShardPolicy(nameof(Id), Meta.Factory)
         {
             ConnPolicy = "{0}",
-            TablePolicy = "{0}_{1:yyyyMMdd}",
+            TablePolicy = "{0}_{1:dd}",
             Step = TimeSpan.FromDays(1),
         };
 
@@ -32,6 +32,11 @@ public partial class TraceData : Entity<TraceData>
 
         // 过滤器 UserModule、TimeModule、IPModule
         Meta.Modules.Add<TimeModule>();
+
+        // 针对Mysql启用压缩表
+        var table = Meta.Table.DataTable;
+        table.Properties["ROW_FORMAT"] = "COMPRESSED";
+        table.Properties["KEY_BLOCK_SIZE"] = "4";
     }
 
     /// <summary>验证数据，通过抛出异常的方式提示验证失败。</summary>
@@ -371,11 +376,8 @@ public partial class TraceData : Entity<TraceData>
         var snow = Meta.Factory.Snow;
         var whereExp = _.Id < snow.GetId(date);
 
-        // 使用底层接口，加大执行时间
-        var session = Meta.Session;
-        using var cmd = session.Dal.Session.CreateCommand($"Delete From {session.FormatedTableName} Where {whereExp}");
-        cmd.CommandTimeout = 5 * 60;
-        return session.Dal.Session.Execute(cmd);
+        // 使用底层接口，分批删除
+        return Delete(whereExp);
     }
     #endregion
 }
