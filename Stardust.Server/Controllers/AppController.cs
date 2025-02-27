@@ -7,6 +7,7 @@ using NewLife.Data;
 using NewLife.Http;
 using NewLife.Log;
 using NewLife.Remoting;
+using NewLife.Remoting.Extensions;
 using NewLife.Remoting.Models;
 using NewLife.Security;
 using NewLife.Serialization;
@@ -14,6 +15,8 @@ using Stardust.Data;
 using Stardust.Data.Configs;
 using Stardust.Models;
 using Stardust.Server.Services;
+using XCode;
+using TokenService = Stardust.Server.Services.TokenService;
 using WebSocket = System.Net.WebSockets.WebSocket;
 using WebSocketMessageType = System.Net.WebSockets.WebSocketMessageType;
 
@@ -31,17 +34,17 @@ public class AppController : BaseController
     private readonly DeployService _deployService;
     private readonly ITracer _tracer;
     private readonly AppQueueService _queue;
+    private readonly AppSessionManager _sessionManager;
     private readonly StarServerSetting _setting;
-    private readonly IHostApplicationLifetime _lifetime;
 
-    public AppController(TokenService tokenService, RegistryService registryService, DeployService deployService, AppQueueService queue, StarServerSetting setting, IHostApplicationLifetime lifetime, ITracer tracer)
+    public AppController(TokenService tokenService, RegistryService registryService, DeployService deployService, AppQueueService queue, AppSessionManager sessionManager, StarServerSetting setting, IServiceProvider serviceProvider, ITracer tracer) : base(serviceProvider)
     {
         _tokenService = tokenService;
         _registryService = registryService;
         _deployService = deployService;
         _queue = queue;
+        _sessionManager = sessionManager;
         _setting = setting;
-        _lifetime = lifetime;
         _tracer = tracer;
     }
 
@@ -55,7 +58,18 @@ public class AppController : BaseController
         return app != null;
     }
 
-    protected override void OnWriteError(String action, String message) => WriteHistory(action, false, message, _clientId, UserHost);
+    /// <summary>写日志</summary>
+    /// <param name="action"></param>
+    /// <param name="success"></param>
+    /// <param name="message"></param>
+    protected override void WriteLog(String action, Boolean success, String message)
+    {
+        var olt = AppOnline.FindByClient(_clientId);
+
+        var hi = AppHistory.Create(_app, action, success, message, olt?.Version, Environment.MachineName, UserHost);
+        hi.Client = _clientId;
+        hi.Insert();
+    }
     #endregion
 
     #region 登录&心跳
@@ -168,10 +182,21 @@ public class AppController : BaseController
     [HttpPost(nameof(PostEvents))]
     public Int32 PostEvents(EventModel[] events)
     {
+        var ip = UserHost;
+        var olt = AppOnline.FindByClient(_clientId);
+        var his = new List<AppHistory>();
         foreach (var model in events)
         {
-            WriteHistory(model.Name, !model.Type.EqualIgnoreCase("error"), model.Time.ToDateTime().ToLocalTime(), model.Remark, null);
+            //WriteHistory(model.Name, !model.Type.EqualIgnoreCase("error"), model.Time.ToDateTime().ToLocalTime(), model.Remark, null);
+            var success = !model.Type.EqualIgnoreCase("error");
+            var time = model.Time.ToDateTime().ToLocalTime();
+            var hi = AppHistory.Create(_app, model.Name, success, model.Remark, olt?.Version, Environment.MachineName, ip);
+            hi.Client = _clientId;
+            if (time.Year > 2000) hi.CreateTime = time;
+            his.Add(hi);
         }
+
+        his.Insert();
 
         return events.Length;
     }
@@ -187,7 +212,7 @@ public class AppController : BaseController
         {
             using var socket = await HttpContext.WebSockets.AcceptWebSocketAsync();
 
-            await Handle(socket, _app, _clientId);
+            await HandleNotify(socket, _app, _clientId, UserHost, HttpContext.RequestAborted);
         }
         else
         {
@@ -195,7 +220,7 @@ public class AppController : BaseController
         }
     }
 
-    private async Task Handle(WebSocket socket, App app, String clientId)
+    private async Task HandleNotify(WebSocket socket, App app, String clientId, String ip, CancellationToken cancellationToken)
     {
         if (app == null) throw new ApiException(401, "未登录！");
 
@@ -204,7 +229,7 @@ public class AppController : BaseController
         var address = connection.RemoteIpAddress ?? IPAddress.Loopback;
         if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
         var remote = new IPEndPoint(address, connection.RemotePort);
-        WriteHistory("WebSocket连接", true, $"State={socket.State} sid={sid} Remote={remote}", clientId);
+        WriteLog("WebSocket连接", true, $"State={socket.State} sid={sid} Remote={remote}");
 
         var olt = AppOnline.FindByClient(clientId);
         if (olt != null)
@@ -213,31 +238,40 @@ public class AppController : BaseController
             olt.Update();
         }
 
-        var ip = UserHost;
-        //var source = new CancellationTokenSource();
-        var source = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.ApplicationStopping);
-        _ = Task.Run(() => ConsumeMessage(socket, app, clientId, ip, source));
-
-        await socket.WaitForClose(txt =>
+        using var session = new AppCommandSession(socket) { Code = $"{app.Name}@{clientId}", WriteLog = WriteLog };
+        try
         {
-            if (txt == "Ping")
+            _sessionManager.Add(session);
+
+            // 链接取消令牌。当客户端断开时，触发取消，结束长连接
+            using var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            //_ = Task.Run(() => ConsumeMessage(socket, app, clientId, ip, source));
+
+            await socket.WaitForClose(txt =>
             {
-                socket.SendAsync("Pong".GetBytes(), WebSocketMessageType.Text, true, source.Token);
-
-                var olt = AppOnline.FindByClient(clientId);
-                if (olt != null)
+                if (txt == "Ping")
                 {
-                    olt.WebSocket = true;
-                    olt.Update();
-                }
-            }
-        }, source);
+                    socket.SendAsync("Pong".GetBytes(), WebSocketMessageType.Text, true, source.Token);
 
-        WriteHistory("WebSocket断开", true, $"State={socket.State} CloseStatus={socket.CloseStatus} sid={sid} Remote={remote}", clientId);
-        if (olt != null)
+                    var olt = AppOnline.FindByClient(clientId);
+                    if (olt != null)
+                    {
+                        olt.WebSocket = true;
+                        olt.Update();
+                    }
+                }
+            }, source);
+        }
+        finally
         {
-            olt.WebSocket = false;
-            olt.Update();
+            WriteLog("WebSocket断开", true, $"State={socket.State} CloseStatus={socket.CloseStatus} sid={sid} Remote={remote}");
+            if (olt != null)
+            {
+                olt.WebSocket = false;
+                olt.Update();
+            }
+
+            _sessionManager.Remove(session);
         }
     }
 
@@ -264,7 +298,7 @@ public class AppController : BaseController
 
                     if (msg == null || msg.Id == 0 || msg.Expire.Year > 2000 && msg.Expire < DateTime.UtcNow)
                     {
-                        WriteHistory("WebSocket发送", false, "消息无效或已过期。" + mqMsg, clientId, ip);
+                        WriteLog("WebSocket发送", false, "消息无效或已过期。" + mqMsg);
 
                         var log = AppCommand.FindById((Int32)msg.Id);
                         if (log != null)
@@ -276,7 +310,7 @@ public class AppController : BaseController
                     }
                     else
                     {
-                        WriteHistory("WebSocket发送", true, mqMsg, clientId, ip);
+                        WriteLog("WebSocket发送", true, mqMsg);
 
                         // 向客户端传递埋点信息，构建完整调用链
                         msg.TraceId = span + "";
@@ -308,7 +342,7 @@ public class AppController : BaseController
         {
             XTrace.WriteLine("WebSocket异常 app={0} ip={1}", app, ip);
             XTrace.WriteException(ex);
-            WriteHistory("WebSocket断开", false, $"State={socket.State} CloseStatus={socket.CloseStatus} {ex}", clientId, ip);
+            WriteLog("WebSocket断开", false, $"State={socket.State} CloseStatus={socket.CloseStatus} {ex}");
         }
         finally
         {
@@ -326,8 +360,16 @@ public class AppController : BaseController
         if (model.Code.IsNullOrEmpty()) throw new ArgumentNullException(nameof(model.Code), "必须指定应用");
         if (model.Command.IsNullOrEmpty()) throw new ArgumentNullException(nameof(model.Command));
 
-        var target = App.FindByName(model.Code);
-        if (target == null) throw new ArgumentOutOfRangeException(nameof(model.Code), "无效应用");
+        var code = model.Code;
+        var clientId = "";
+        var p = code.IndexOf('@');
+        if (p > 0)
+        {
+            clientId = code[(p + 1)..];
+            code = code[..p];
+        }
+
+        var target = App.FindByName(code) ?? throw new ArgumentOutOfRangeException(nameof(model.Code), "无效应用");
 
         var app = _app;
         if (app == null || app.AllowControlNodes.IsNullOrEmpty()) throw new ApiException(401, "无权操作！");
@@ -335,7 +377,7 @@ public class AppController : BaseController
         if (app.AllowControlNodes != "*" && !target.Name.EqualIgnoreCase(app.AllowControlNodes.Split(",")))
             throw new ApiException(403, $"[{app}]无权操作应用[{target}]！\n安全设计需要，默认禁止所有应用向其它应用发送控制指令。\n可在注册中心应用系统中修改[{app}]的可控节点，添加[{target.Name}]，或者设置为*所有应用。");
 
-        var cmd = await _registryService.SendCommand(target, model, app + "");
+        var cmd = await _registryService.SendCommand(target, clientId, model, app + "");
 
         return cmd.Id;
     }
@@ -426,7 +468,8 @@ public class AppController : BaseController
             };
             consumes.Add(svc);
 
-            WriteHistory("ResolveService", true, $"消费服务[{model.ServiceName}] {model.ToJson()}", svc.Client);
+            _clientId = svc.Client;
+            WriteLog("ResolveService", true, $"消费服务[{model.ServiceName}] {model.ToJson()}");
         }
 
         // 节点信息
@@ -465,15 +508,6 @@ public class AppController : BaseController
     #endregion
 
     #region 辅助
-    private void WriteHistory(String action, Boolean success, String remark, String clientId, String ip = null)
-    {
-        var olt = AppOnline.FindByClient(clientId);
-
-        var hi = AppHistory.Create(_app, action, success, remark, olt?.Version, Environment.MachineName, ip ?? UserHost);
-        hi.Client = clientId ?? _clientId;
-        hi.Insert();
-    }
-
     private void WriteHistory(String action, Boolean success, DateTime time, String remark, String clientId, String ip = null)
     {
         var olt = AppOnline.FindByClient(clientId);
