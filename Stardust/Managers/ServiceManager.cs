@@ -533,7 +533,7 @@ public class ServiceManager : DisposeBase
             await http.DownloadFileAsync(url, tmp);
 
             WriteLog("下载完成，准备覆盖：{0}", dst.FullName);
-            if (info.Mode == DeployModes.Full) //如果是完整包，删除已经存的目录所有文件
+            if (info.Mode == DeployModes.Full && svc.Mode == ServiceModes.Extract) //如果是完整包，删除已经存的目录所有文件
             {
                 var wd = svc.WorkingDirectory.AsDirectory();
                 if (wd.Exists) { wd.Delete(true); }
