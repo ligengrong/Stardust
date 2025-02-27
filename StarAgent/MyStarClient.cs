@@ -1,10 +1,13 @@
 ﻿using System.Diagnostics;
+
 using NewLife;
 using NewLife.Agent;
+using NewLife.Agent.CommandHandler;
 using NewLife.Log;
 using NewLife.Remoting.Clients;
 using NewLife.Remoting.Models;
 using NewLife.Serialization;
+
 using Stardust;
 using Stardust.Models;
 
@@ -44,6 +47,7 @@ internal class MyStarClient : StarClient
         this.RegisterCommand("node/reboot", Reboot);
         this.RegisterCommand("node/setchannel", SetChannel);
         this.RegisterCommand("node/clearfolder", ClearFolder);//清除文件夹
+        this.RegisterCommand("node/service", ServiceCommand);//agent命令行
         base.Open();
     }
 
@@ -245,6 +249,11 @@ internal class MyStarClient : StarClient
         set.Save();
 
         return "success " + argument;
+    }
+    string ServiceCommand(string argument)
+    {
+        Service.Main([argument]);
+        return "success";
     }
     #endregion
 }

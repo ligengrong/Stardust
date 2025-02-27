@@ -533,12 +533,7 @@ public class ServiceManager : DisposeBase
             await http.DownloadFileAsync(url, tmp);
 
             WriteLog("下载完成，准备覆盖：{0}", dst.FullName);
-            if (info.Mode == DeployModes.Full && svc.Mode == ServiceModes.Extract) //如果是完整包，删除已经存的目录所有文件
-            {
-                var wd = svc.WorkingDirectory.AsDirectory();
-                if (wd.Exists) { wd.Delete(true); }
-                svc.WorkingDirectory.EnsureDirectory(false);
-            }
+          
             // 校验哈希
             var ti = tmp.AsFile();
             var hash = ti.MD5().ToHex();
@@ -546,6 +541,13 @@ public class ServiceManager : DisposeBase
                 WriteLog("下载失败，校验错误！{0}（本地）!={1}（远程）", hash, info.Hash);
             else
             {
+                if (info.Mode == DeployModes.Full && svc.Mode == ServiceModes.Extract) //如果是完整包，删除已经存的目录所有文件
+                {
+                    WriteLog("DeployModes：{0} ServiceModes：{1} 满足清除工作目录所有文件", info.Mode, svc.Mode);
+                    var wd = svc.WorkingDirectory.AsDirectory();
+                    if (wd.Exists) { wd.Delete(true); }
+                    svc.WorkingDirectory.EnsureDirectory(false);
+                }
                 // 删除原文件
                 if (dst.Exists)
                 {

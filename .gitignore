@@ -30,8 +30,6 @@ bld/
 /BinClient
 /BinWeb
 /Stardust.Data/Nodes/Config
-/Stardust.Server/Properties
-/Stardust.Web/Properties
 /BinClient2
 /Stardust.Data/Monitors/Config
 /Stardust.Data/Entity/Config
@@ -48,4 +46,3 @@ Stardust.Web.Vue/dist
 
 /Stardust.Data/Platform/Config
 /Stardust.Data/RedisNodes/Config
-*.pubxml
