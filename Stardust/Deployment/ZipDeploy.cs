@@ -200,7 +200,7 @@ public class ZipDeploy
         shadow = shadow.CombinePath($"{Name}-{hash}");
         if (!Path.IsPathRooted(shadow)) shadow = rundir.FullName.CombinePath(shadow).GetFullPath();
         WriteLog("影子目录 {0}", shadow);
-
+        shadow.EnsureDirectory(false);
         var hasExtracted = false;
         var sdi = shadow.AsDirectory();
         if (!sdi.Exists)
