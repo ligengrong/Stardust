@@ -609,6 +609,7 @@ public partial class Node : Entity<Node>
         var rs = Area.SearchIP(node.UpdateIP);
         if (rs.Count > 0) node.ProvinceID = rs[0].ID;
         if (rs.Count > 1) node.CityID = rs[^1].ID;
+        if (0 >= node.CityID) { node.CityID = node.ProvinceID; }
     }
 
     /// <summary>
