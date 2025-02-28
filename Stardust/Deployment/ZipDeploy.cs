@@ -168,7 +168,7 @@ public class ZipDeploy
     /// <summary>执行拉起应用</summary>
     public Boolean Execute(Int32 msWait = 3_000)
     {
-        if (FileName.IsNullOrEmpty()) throw new ArgumentNullException(nameof(FileName));
+      if (FileName.IsNullOrEmpty()) throw new ArgumentNullException(nameof(FileName));
 
         using var span = Tracer?.NewSpan("ZipDeploy-Execute", new { WorkingDirectory, FileName });
 
@@ -195,21 +195,19 @@ public class ZipDeploy
 
         WriteLog("ZipDeploy {0}", name);
         WriteLog("运行目录 {0}", rundir);
-
         // 影子目录，用于解压缩应用
         shadow = shadow.CombinePath($"{Name}-{hash}");
         if (!Path.IsPathRooted(shadow)) shadow = rundir.FullName.CombinePath(shadow).GetFullPath();
         WriteLog("影子目录 {0}", shadow);
-        shadow.EnsureDirectory(false);
         var hasExtracted = false;
         var sdi = shadow.AsDirectory();
         if (!sdi.Exists)
         {
             span?.AppendTag("ExtractShadow");
-
             // 删除其它版本
-            if (sdi.Parent != null)
+            if (sdi.Parent != null && sdi.Parent.Exists)
             {
+                
                 foreach (var di in sdi.Parent.GetDirectories($"{Name}-*"))
                 {
                     span?.AppendTag($"删除旧版 {di.FullName}");
