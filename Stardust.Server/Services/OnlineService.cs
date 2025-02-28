@@ -82,7 +82,7 @@ public class OnlineService : IHostedService
     {
         using var span = _tracer?.NewSpan(nameof(CheckHealth));
 
-        var page = new PageParameter { PageSize = 1000 };
+        var page = new PageParameter { PageSize = 1000, Sort = AppService._.Id.FormatedName };
         while (true)
         {
             var list = AppService.Search(-1, -1, null, true, null, page);
