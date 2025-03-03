@@ -68,9 +68,14 @@ public class PingInfo : PingRequest
 
     ///// <summary>延迟</summary>
     //public Int32 Delay { get; set; }
+    /// <summary>磁盘使用情况</summary>
+    public IList<DiskUsage> DiskUsages { get; set; }
     #endregion
 }
-
+public class DiskUsage { 
+    public string Name { get; set; }
+    public double Usage { get; set; }
+}
 ///// <summary>心跳响应</summary>
 //public class PingResponse : IPingResponse
 //{

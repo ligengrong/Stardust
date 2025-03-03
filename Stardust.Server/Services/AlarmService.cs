@@ -1,12 +1,16 @@
 ﻿using System.Text;
 using System.Web;
+
 using NewLife;
 using NewLife.Caching;
 using NewLife.Log;
+using NewLife.Serialization;
 using NewLife.Threading;
+
 using Stardust.Data;
 using Stardust.Data.Monitors;
 using Stardust.Data.Nodes;
+using Stardust.Models;
 
 namespace Stardust.Server.Services;
 
@@ -500,23 +504,26 @@ public class AlarmService : IHostedService
         //服务器全磁盘警告
         if (nodeOnline is not null && node.AlarmDiskRate > 0 && node.TotalSize > 0)
         {
-            var drives = nodeOnline.DriveInfo.Split(",").Select(o => o.Split(":")[0]).ToList();
-            var sb = new StringBuilder();
-            foreach (var d in drives)
+            var pInfo = nodeOnline.Data?.ToJsonEntity<PingInfo>();
+            if (pInfo is not null && pInfo.DiskUsages is not null && 0 < pInfo.DiskUsages.Count)
             {
-                var rates = d.Split('_');
-                if (rates.Length != 2) { continue; }
-                var rate = rates[0].ToDouble();
-                if (rate >= node.AlarmDiskRate) { sb.AppendLine($">**{rates[1]}磁盘使用率：**<font color=\"red\"> {rate / 100d:p0} >= {node.AlarmDiskRate / 100d:p0}</font>"); }
-            }
-            if (sb.Length > 0)
-            {
-                // 一定时间内不要重复报错，除非错误翻倍
-                var error2 = _cache.Get<Double>("alarm:AllDiskRate:" + node.ID);
-                if (error2 == 0)
+                var sb = new StringBuilder();
+                foreach (var du in pInfo.DiskUsages)
                 {
-                    _cache.Set("alarm:AllDiskRate:" + node.ID, node.AlarmDiskRate, 5 * 60);
-                    SendAlarm("alldisk", node, data, $"[{node.Name}]磁盘告警", sb.ToString());
+                    if (du.Usage >= node.AlarmDiskRate)
+                    {
+                        sb.AppendLine($">**{du.Name}磁盘使用率：**<font color=\"red\"> {du.Usage / 100d:p0} >= {node.AlarmDiskRate / 100d:p0}</font>");
+                    }
+                }
+                if (sb.Length > 0)
+                {
+                    // 一定时间内不要重复报错，除非错误翻倍
+                    var error2 = _cache.Get<Double>("alarm:AllDiskRate:" + node.ID);
+                    if (error2 == 0)
+                    {
+                        _cache.Set("alarm:AllDiskRate:" + node.ID, node.AlarmDiskRate, 5 * 60);
+                        SendAlarm("alldisk", node, data, $"[{node.Name}]磁盘告警", sb.ToString());
+                    }
                 }
             }
         }

@@ -3,6 +3,7 @@ using System.Net.NetworkInformation;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+
 using NewLife;
 using NewLife.Caching;
 using NewLife.Data;
@@ -12,6 +13,7 @@ using NewLife.Reflection;
 using NewLife.Remoting.Clients;
 using NewLife.Remoting.Models;
 using NewLife.Security;
+
 using Stardust.Managers;
 using Stardust.Models;
 
@@ -310,9 +312,9 @@ public class StarClient : ClientBase, ICommandClient, IEventProvider
         mi.Refresh();
 
         var drives = GetDrives();
-
         request.IP = AgentInfo.GetIps();
-        request.DriveInfo = drives.Join(",", e => $"{Math.Round((double)(e.TotalSize - e.AvailableFreeSpace) / e.TotalSize * 100, 2)}_{e.Name}[{e.DriveFormat}]={e.AvailableFreeSpace.ToGMK()}/{e.TotalSize.ToGMK()}");
+        request.DriveInfo = drives.Join(",", e => $"{e.Name}[{e.DriveFormat}]={e.AvailableFreeSpace.ToGMK()}/{e.TotalSize.ToGMK()}");
+        request.DiskUsages = drives.Select(o => new DiskUsage { Name = o.Name, Usage = Math.Round((double)(o.TotalSize - o.AvailableFreeSpace) / o.TotalSize * 100, 2) }).ToList();
         request.Macs = (String?)NetHelper.GetMacs().Select(e => e.ToHex("-")).OrderBy(e => e).Join(",");
         request.ProcessCount = ps.Length;
         request.Processes = pcs.Join();
@@ -337,7 +339,6 @@ public class StarClient : ClientBase, ICommandClient, IEventProvider
             // 读取无线信号强度
             if (ext.Items.TryGetValue("Signal", out var value)) request.Signal = value.ToInt();
         }
-
         return request;
     }
 
