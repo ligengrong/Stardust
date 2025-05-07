@@ -14,27 +14,22 @@ using Stardust.Models;
 
 namespace Stardust.Server.Services;
 
-//public interface IAlarmService
-//{
-//    /// <summary>添加需要统计的应用，去重</summary>
-//    /// <param name="appId"></param>
-//    void Add(Int32 appId);
-//}
-
 public class AlarmService : IHostedService
 {
     /// <summary>计算周期。默认30秒</summary>
     public Int32 Period { get; set; } = 30;
 
     private TimerX _timer;
-    private readonly ICache _cache;
+    private ICache _cache;
     private readonly StarServerSetting _setting;
+    private readonly IServiceProvider _serviceProvider;
     private readonly ITracer _tracer;
 
-    public AlarmService(StarServerSetting setting, ICacheProvider cacheProvider, ITracer tracer)
+    public AlarmService(StarServerSetting setting, IServiceProvider serviceProvider, ITracer tracer)
     {
         _setting = setting;
-        _cache = cacheProvider.Cache;
+        _serviceProvider = serviceProvider;
+        //_cache = cacheProvider.Cache;
         _tracer = tracer;
 
         Period = setting.AlarmPeriod;
@@ -43,7 +38,7 @@ public class AlarmService : IHostedService
     public Task StartAsync(CancellationToken cancellationToken)
     {
         // 初始化定时器
-        _timer = new TimerX(DoAlarm, null, 5_000, Period * 1000) { Async = true };
+        _timer = new TimerX(DoAlarm, null, 15_000, Period * 1000) { Async = true };
 
         return Task.CompletedTask;
     }
@@ -55,19 +50,9 @@ public class AlarmService : IHostedService
         return Task.CompletedTask;
     }
 
-    ///// <summary>添加需要统计的应用，去重</summary>
-    ///// <param name="appId"></param>
-    //public void Add(Int32 appId)
-    //{
-    //    if (!_bag.Contains(appId)) _bag.Add(appId);
-    //}
-
     private void DoAlarm(Object state)
     {
-        //while (_bag.TryTake(out var appId))
-        //{
-        //    //Process(appId);
-        //}
+        _cache ??= _serviceProvider.GetService<ICacheProvider>()?.Cache;
 
         // 应用告警
         var list = AppTracer.FindAllWithCache();
@@ -79,11 +64,6 @@ public class AlarmService : IHostedService
         }
 
         // 节点告警
-        //var nodes = Node.FindAllWithCache();
-        //foreach (var item in nodes)
-        //{
-        //    ProcessNode(item);
-        //}
         var onlines = NodeOnline.FindAll();
         foreach (var item in onlines)
         {

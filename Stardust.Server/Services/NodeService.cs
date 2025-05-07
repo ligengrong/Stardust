@@ -517,15 +517,27 @@ public class NodeService
         var rs = new List<CommandModel>();
         foreach (var item in cmds)
         {
-            if (item.Times > 10 || item.Expire.Year > 2000 && item.Expire < DateTime.Now)
+            // 命令要提前下发，在客户端本地做延迟处理，这里不应该过滤掉
+            //// 命令是否已经开始
+            //if (item.StartTime > DateTime.Now) continue;
+
+            // 带有过期时间的命令，加大重试次数
+            var maxTimes = item.Expire.Year > 2000 ? 100 : 10;
+            if (item.Times > maxTimes || item.Expire.Year > 2000 && item.Expire < DateTime.Now)
                 item.Status = CommandStatus.取消;
             else
             {
-                if (item.Status == CommandStatus.处理中 && item.UpdateTime.AddMinutes(10) < DateTime.Now) continue;
+                // 如果命令正在处理中，则短期内不重复下发
+                if (item.Status == CommandStatus.处理中 && item.UpdateTime.AddSeconds(30) > DateTime.Now) continue;
 
-                item.Times++;
+                // 即时指令，或者已到开始时间的未来指令，才增加次数
+                if (item.StartTime.Year < 2000 || item.StartTime < DateTime.Now)
+                    item.Times++;
                 item.Status = CommandStatus.处理中;
-                rs.Add(item.ToModel());
+
+                var commandModel = BuildCommand(item.Node, item);
+
+                rs.Add(commandModel);
             }
             item.UpdateTime = DateTime.Now;
         }
@@ -750,7 +762,7 @@ public class NodeService
         if (app.AllowControlNodes != "*" && !node.Code.EqualIgnoreCase(app.AllowControlNodes.Split(",")))
             throw new ApiException(403, $"[{app}]无权操作节点[{node}]！\n安全设计需要，默认禁止所有应用向任意节点发送控制指令。\n可在注册中心应用系统中修改[{app}]的可控节点，添加[{node.Code}]，或者设置为*所有节点。");
 
-        return await SendCommand(node, model, app.Name);
+        return await SendCommand(node, model, app + "");
     }
 
     /// <summary>向节点发送命令。（内部用）</summary>
@@ -776,8 +788,7 @@ public class NodeService
         if (model.Expire > 0) cmd.Expire = DateTime.Now.AddSeconds(model.Expire);
         cmd.Insert();
 
-        var commandModel = cmd.ToModel();
-        commandModel.TraceId = DefaultSpan.Current + "";
+        var commandModel = BuildCommand(node, cmd);
 
         //var queue = _cacheProvider.GetQueue<String>($"nodecmd:{node.Code}");
         //queue.Add(commandModel.ToJson());
@@ -805,6 +816,24 @@ public class NodeService
     #endregion
 
     #region 辅助
+    private static Version _version = new(3, 1, 2025, 0103);
+    private CommandModel BuildCommand(Node node, NodeCommand cmd)
+    {
+        var model = cmd.ToModel();
+        model.TraceId = DefaultSpan.Current + "";
+
+        // 新版本使用UTC时间
+        if (!node.Version.IsNullOrEmpty() && Version.TryParse(node.Version, out var ver) && ver >= _version)
+        {
+            if (model.StartTime.Year > 2000)
+                model.StartTime = model.StartTime.ToUniversalTime();
+            if (model.Expire.Year > 2000)
+                model.Expire = model.Expire.ToUniversalTime();
+        }
+
+        return model;
+    }
+
     public (JwtBuilder, Node, Exception) DecodeToken(String token, String tokenSecret)
     {
         if (token.IsNullOrEmpty()) throw new ArgumentNullException(nameof(token));

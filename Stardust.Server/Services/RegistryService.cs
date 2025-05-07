@@ -1,4 +1,5 @@
 ﻿using NewLife;
+using NewLife.Caching;
 using NewLife.Log;
 using NewLife.Remoting;
 using NewLife.Remoting.Models;
@@ -21,7 +22,7 @@ public class RegistryService
     private readonly AppSessionManager _sessionManager;
     private readonly ITracer _tracer;
 
-    public RegistryService(AppQueueService queue, AppOnlineService appOnline, IPasswordProvider passwordProvider, AppSessionManager sessionManager, ITracer tracer)
+    public RegistryService(AppQueueService queue, AppOnlineService appOnline, IPasswordProvider passwordProvider, AppSessionManager sessionManager, ICacheProvider cacheProvider, ITracer tracer)
     {
         _queue = queue;
         _appOnline = appOnline;
@@ -419,15 +420,27 @@ public class RegistryService
         var rs = new List<CommandModel>();
         foreach (var item in cmds)
         {
-            if (item.Times > 10 || item.Expire.Year > 2000 && item.Expire < DateTime.Now)
+            // 命令要提前下发，在客户端本地做延迟处理，这里不应该过滤掉
+            //// 命令是否已经开始
+            //if (item.StartTime > DateTime.Now) continue;
+
+            // 带有过期时间的命令，加大重试次数
+            var maxTimes = item.Expire.Year > 2000 ? 100 : 10;
+            if (item.Times > maxTimes || item.Expire.Year > 2000 && item.Expire < DateTime.Now)
                 item.Status = CommandStatus.取消;
             else
             {
-                if (item.Status == CommandStatus.处理中 && item.UpdateTime.AddMinutes(10) < DateTime.Now) continue;
+                // 如果命令正在处理中，则短期内不重复下发
+                if (item.Status == CommandStatus.处理中 && item.UpdateTime.AddSeconds(30) > DateTime.Now) continue;
 
-                item.Times++;
+                // 即时指令，或者已到开始时间的未来指令，才增加次数
+                if (item.StartTime.Year < 2000 || item.StartTime < DateTime.Now)
+                    item.Times++;
                 item.Status = CommandStatus.处理中;
-                rs.Add(item.ToModel());
+
+                var commandModel = BuildCommand(item.App, item);
+
+                rs.Add(commandModel);
             }
             item.UpdateTime = DateTime.Now;
         }
@@ -437,8 +450,9 @@ public class RegistryService
     }
 
     /// <summary>向应用发送命令</summary>
-    /// <param name="app"></param>
-    /// <param name="model"></param>
+    /// <param name="app">应用</param>
+    /// <param name="clientId">应用实例标识。向特定应用实例发送命令时指定</param>
+    /// <param name="model">命令模型</param>
     /// <param name="user">创建者</param>
     /// <returns></returns>
     public async Task<AppCommand> SendCommand(App app, String clientId, CommandInModel model, String user)
@@ -461,7 +475,7 @@ public class RegistryService
         cmd.Insert();
 
         // 分发命令给该应用的所有实例
-        var cmdModel = cmd.ToModel();
+        var cmdModel = BuildCommand(app, cmd);
         var ts = new List<Task>();
         foreach (var item in AppOnline.FindAllByApp(app.Id))
         {
@@ -494,12 +508,20 @@ public class RegistryService
         return cmd;
     }
 
-    public async Task<AppCommand> SendCommand(App app, String clientId, String command, String argument, String user = null)
+    /// <summary>向应用发送命令</summary>
+    /// <param name="app">应用</param>
+    /// <param name="clientId">应用实例标识。向特定应用实例发送命令时指定</param>
+    /// <param name="command">命令</param>
+    /// <param name="argument">参数</param>
+    /// <param name="user"></param>
+    /// <returns></returns>
+    public async Task<AppCommand> SendCommand(App app, String clientId, String command, String argument, Int32 expire = 0, String user = null)
     {
         var model = new CommandInModel
         {
             Command = command,
             Argument = argument,
+            Expire = expire,
         };
         return await SendCommand(app, clientId, model, user);
     }
@@ -526,13 +548,14 @@ public class RegistryService
     /// <param name="service"></param>
     /// <param name="command"></param>
     /// <param name="user"></param>
-    public async Task NotifyConsumers(Service service, String command, String user = null)
+    public async Task NotifyConsumers(AppService service, String command, String user = null)
     {
-        var list = AppConsume.FindAllByService(service.Id);
+        var list = AppConsume.FindAllByService(service.ServiceId);
         if (list.Count == 0) return;
 
+        // 获取所有订阅该服务的应用，可能相同应用多实例订阅，需要去重
         var appIds = list.Select(e => e.AppId).Distinct().ToArray();
-        var arguments = new { service.Name, service.Address }.ToJson();
+        var arguments = new { service.AppName, service.ServiceName, service.Address }.ToJson();
 
         using var span = _tracer?.NewSpan(nameof(NotifyConsumers), $"{command} appIds={appIds.Join()} user={user} arguments={arguments}");
 
@@ -540,9 +563,27 @@ public class RegistryService
         foreach (var item in appIds)
         {
             var app = App.FindById(item);
-            if (app != null) ts.Add(SendCommand(app, null, command, arguments, user));
+            if (app != null) ts.Add(SendCommand(app, null, command, arguments, 600, user));
         }
 
         await Task.WhenAll(ts);
+    }
+
+    //private static Version _version = new(3, 1, 2025, 0103);
+    private CommandModel BuildCommand(App app, AppCommand cmd)
+    {
+        var model = cmd.ToModel();
+        model.TraceId = DefaultSpan.Current + "";
+
+        // 新版本使用UTC时间
+        if (!app.Version.IsNullOrEmpty() && Version.TryParse(app.Version, out var ver) && (ver.Build < 2000 || ver.Build > 2025))
+        {
+            if (model.StartTime.Year > 2000)
+                model.StartTime = model.StartTime.ToUniversalTime();
+            if (model.Expire.Year > 2000)
+                model.Expire = model.Expire.ToUniversalTime();
+        }
+
+        return model;
     }
 }

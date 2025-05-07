@@ -13,13 +13,11 @@ public class AppSessionManager : SessionManager
 
 class AppCommandSession(WebSocket socket) : WsCommandSession(socket)
 {
-    public Action<String, Boolean, String> WriteLog { get; set; }
-
     public override Task HandleAsync(CommandModel command, String message, CancellationToken cancellationToken)
     {
         if (command == null || command.Id == 0 || command.Expire.Year > 2000 && command.Expire < DateTime.UtcNow)
         {
-            WriteLog("WebSocket发送", false, "消息无效或已过期。" + message);
+            Log?.WriteLog("WebSocket发送", false, "消息无效或已过期。" + message);
 
             var log = AppCommand.FindById((Int32)command.Id);
             if (log != null)
@@ -32,7 +30,7 @@ class AppCommandSession(WebSocket socket) : WsCommandSession(socket)
         }
 
         {
-            WriteLog("WebSocket发送", true, message);
+            Log?.WriteLog("WebSocket发送", true, message);
 
             var log = AppCommand.FindById((Int32)command.Id);
             if (log != null)

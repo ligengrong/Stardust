@@ -290,7 +290,8 @@ public class StarFactory : DisposeBase
             TimerScheduler.GlobalTimeProvider = new StarTimeProvider { Client = client };
 #endif
 
-            client.WriteInfoEvent("应用启动", $"pid={Process.GetCurrentProcess().Id}");
+            var p = Process.GetCurrentProcess();
+            client.WriteInfoEvent("应用启动", $"pid={p.Id}, Name={p.GetProcessName()}, FileName={p.MainModule?.FileName}");
 
             _client = client;
 
@@ -304,6 +305,35 @@ public class StarFactory : DisposeBase
         }
 
         return true;
+    }
+
+    /// <summary>设置服务端地址</summary>
+    public void SetServer(String server)
+    {
+        Server = server;
+
+        // 不能重建_client，太多对象引用它，这里无法做到逐一更新
+        //_client = null;
+
+        var client = _client;
+        if (client != null)
+        {
+            // 先注销再登录
+            try
+            {
+                client.Logout(nameof(SetServer)).Wait();
+            }
+            catch (Exception ex)
+            {
+                XTrace.WriteException(ex);
+            }
+
+            client.Server = server;
+            client.Open();
+        }
+
+        // 注册StarServer环境变量，子进程共享
+        Environment.SetEnvironmentVariable("StarServer", Server);
     }
     #endregion
 
@@ -331,7 +361,7 @@ public class StarFactory : DisposeBase
 
         XTrace.WriteLine("星尘监控中心：ITracer采集并上报应用埋点数据，自动埋点Api接口、Http请求、数据库操作、Redis操作等。可用于监控系统健康状态，分析分布式系统的调用链和性能瓶颈。");
 
-        var tracer = new StarTracer(Server)
+        var tracer = new StarTracer()
         {
             AppId = AppId,
             AppName = AppName,
@@ -418,7 +448,6 @@ public class StarFactory : DisposeBase
                 if (!Valid()) return null;
 
                 _initService = true;
-                //_appClient = _client as AppClient;
 
                 XTrace.WriteLine("星尘注册中心：IRegistry提供服务发现能力，可根据服务名自动获取所有提供者的节点地址，并创建调用服务的IApiClient客户端，并根据服务提供者的上线与下线自动新增或减少服务地址。");
             }
@@ -439,13 +468,28 @@ public class StarFactory : DisposeBase
     /// <returns></returns>
     public Task<IApiClient> CreateForServiceAsync(String serviceName, String? tag = null) => Service!.CreateForServiceAsync(serviceName, tag);
 
-    /// <summary>发布服务</summary>
+    /// <summary>发布服务。异步发布，屏蔽异常</summary>
+    /// <remarks>即使发布失败，也已经加入队列，后续会定时发布</remarks>
     /// <param name="serviceName">服务名</param>
     /// <param name="address">服务地址</param>
     /// <param name="tag">特性标签</param>
     /// <param name="health">健康监测接口地址</param>
     /// <returns></returns>
-    public Task<PublishServiceInfo> RegisterAsync(String serviceName, String address, String? tag = null, String? health = null) => Service!.RegisterAsync(serviceName, address, tag, health);
+    public Task<PublishServiceInfo> RegisterAsync(String serviceName, String address, String? tag = null, String? health = null)
+    {
+        return Task.Run(() =>
+        {
+            try
+            {
+                return Service!.RegisterAsync(serviceName, address, tag, health);
+            }
+            catch (Exception ex)
+            {
+                XTrace.WriteException(ex);
+                return null;
+            }
+        });
+    }
 
     /// <summary>消费得到服务地址信息</summary>
     /// <param name="serviceName">服务名</param>
@@ -492,7 +536,7 @@ public class StarFactory : DisposeBase
     {
         if (!Valid()) return Task.FromResult(-1);
 
-        var code = AppId;
+        var code = appId;
         if (!clientId.IsNullOrEmpty()) code = $"{code}@{clientId}";
 
         return _client.InvokeAsync<Int32>("App/SendCommand", new CommandInModel
