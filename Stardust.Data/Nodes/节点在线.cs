@@ -82,6 +82,22 @@ public partial class NodeOnline
     [BindColumn("IP", "本地IP", "")]
     public String IP { get => _IP; set { if (OnPropertyChanging("IP", value)) { _IP = value; OnPropertyChanged("IP"); } } }
 
+    private String _Gateway;
+    /// <summary>网关。IP地址和MAC</summary>
+    [DisplayName("网关")]
+    [Description("网关。IP地址和MAC")]
+    [DataObjectField(false, false, true, 50)]
+    [BindColumn("Gateway", "网关。IP地址和MAC", "")]
+    public String Gateway { get => _Gateway; set { if (OnPropertyChanging("Gateway", value)) { _Gateway = value; OnPropertyChanged("Gateway"); } } }
+
+    private String _Dns;
+    /// <summary>DNS地址</summary>
+    [DisplayName("DNS地址")]
+    [Description("DNS地址")]
+    [DataObjectField(false, false, true, 50)]
+    [BindColumn("Dns", "DNS地址", "")]
+    public String Dns { get => _Dns; set { if (OnPropertyChanging("Dns", value)) { _Dns = value; OnPropertyChanged("Dns"); } } }
+
     private String _Category;
     /// <summary>分类</summary>
     [DisplayName("分类")]
@@ -95,7 +111,7 @@ public partial class NodeOnline
     [DisplayName("省份")]
     [Description("省份")]
     [DataObjectField(false, false, false, 0)]
-    [BindColumn("ProvinceID", "省份", "")]
+    [BindColumn("ProvinceID", "省份", "", ItemType = "area1")]
     public Int32 ProvinceID { get => _ProvinceID; set { if (OnPropertyChanging("ProvinceID", value)) { _ProvinceID = value; OnPropertyChanged("ProvinceID"); } } }
 
     private Int32 _CityID;
@@ -103,8 +119,24 @@ public partial class NodeOnline
     [DisplayName("城市")]
     [Description("城市")]
     [DataObjectField(false, false, false, 0)]
-    [BindColumn("CityID", "城市", "")]
+    [BindColumn("CityID", "城市", "", ItemType = "area2")]
     public Int32 CityID { get => _CityID; set { if (OnPropertyChanging("CityID", value)) { _CityID = value; OnPropertyChanged("CityID"); } } }
+
+    private String _Address;
+    /// <summary>地址。该节点所处地理地址</summary>
+    [DisplayName("地址")]
+    [Description("地址。该节点所处地理地址")]
+    [DataObjectField(false, false, true, 200)]
+    [BindColumn("Address", "地址。该节点所处地理地址", "")]
+    public String Address { get => _Address; set { if (OnPropertyChanging("Address", value)) { _Address = value; OnPropertyChanged("Address"); } } }
+
+    private String _Location;
+    /// <summary>位置。场地安装位置，或者经纬度</summary>
+    [DisplayName("位置")]
+    [Description("位置。场地安装位置，或者经纬度")]
+    [DataObjectField(false, false, true, 50)]
+    [BindColumn("Location", "位置。场地安装位置，或者经纬度", "")]
+    public String Location { get => _Location; set { if (OnPropertyChanging("Location", value)) { _Location = value; OnPropertyChanged("Location"); } } }
 
     private Int32 _PingCount;
     /// <summary>心跳</summary>
@@ -284,11 +316,11 @@ public partial class NodeOnline
     public Int32 Delay { get => _Delay; set { if (OnPropertyChanging("Delay", value)) { _Delay = value; OnPropertyChanged("Delay"); } } }
 
     private Int32 _Offset;
-    /// <summary>偏移。客户端UTC时间减服务端UTC时间，单位ms</summary>
+    /// <summary>偏移。客户端UTC时间加上一半延迟再减服务端UTC时间，单位ms</summary>
     [DisplayName("偏移")]
-    [Description("偏移。客户端UTC时间减服务端UTC时间，单位ms")]
+    [Description("偏移。客户端UTC时间加上一半延迟再减服务端UTC时间，单位ms")]
     [DataObjectField(false, false, false, 0)]
-    [BindColumn("Offset", "偏移。客户端UTC时间减服务端UTC时间，单位ms", "")]
+    [BindColumn("Offset", "偏移。客户端UTC时间加上一半延迟再减服务端UTC时间，单位ms", "")]
     public Int32 Offset { get => _Offset; set { if (OnPropertyChanging("Offset", value)) { _Offset = value; OnPropertyChanged("Offset"); } } }
 
     private DateTime _LocalTime;
@@ -409,9 +441,13 @@ public partial class NodeOnline
             "Name" => _Name,
             "ProductCode" => _ProductCode,
             "IP" => _IP,
+            "Gateway" => _Gateway,
+            "Dns" => _Dns,
             "Category" => _Category,
             "ProvinceID" => _ProvinceID,
             "CityID" => _CityID,
+            "Address" => _Address,
+            "Location" => _Location,
             "PingCount" => _PingCount,
             "WebSocket" => _WebSocket,
             "Version" => _Version,
@@ -460,9 +496,13 @@ public partial class NodeOnline
                 case "Name": _Name = Convert.ToString(value); break;
                 case "ProductCode": _ProductCode = Convert.ToString(value); break;
                 case "IP": _IP = Convert.ToString(value); break;
+                case "Gateway": _Gateway = Convert.ToString(value); break;
+                case "Dns": _Dns = Convert.ToString(value); break;
                 case "Category": _Category = Convert.ToString(value); break;
                 case "ProvinceID": _ProvinceID = value.ToInt(); break;
                 case "CityID": _CityID = value.ToInt(); break;
+                case "Address": _Address = Convert.ToString(value); break;
+                case "Location": _Location = Convert.ToString(value); break;
                 case "PingCount": _PingCount = value.ToInt(); break;
                 case "WebSocket": _WebSocket = value.ToBoolean(); break;
                 case "Version": _Version = Convert.ToString(value); break;
@@ -562,6 +602,12 @@ public partial class NodeOnline
         /// <summary>本地IP</summary>
         public static readonly Field IP = FindByName("IP");
 
+        /// <summary>网关。IP地址和MAC</summary>
+        public static readonly Field Gateway = FindByName("Gateway");
+
+        /// <summary>DNS地址</summary>
+        public static readonly Field Dns = FindByName("Dns");
+
         /// <summary>分类</summary>
         public static readonly Field Category = FindByName("Category");
 
@@ -570,6 +616,12 @@ public partial class NodeOnline
 
         /// <summary>城市</summary>
         public static readonly Field CityID = FindByName("CityID");
+
+        /// <summary>地址。该节点所处地理地址</summary>
+        public static readonly Field Address = FindByName("Address");
+
+        /// <summary>位置。场地安装位置，或者经纬度</summary>
+        public static readonly Field Location = FindByName("Location");
 
         /// <summary>心跳</summary>
         public static readonly Field PingCount = FindByName("PingCount");
@@ -637,7 +689,7 @@ public partial class NodeOnline
         /// <summary>延迟。网络延迟，客户端最近一次心跳耗时的一半，单位ms</summary>
         public static readonly Field Delay = FindByName("Delay");
 
-        /// <summary>偏移。客户端UTC时间减服务端UTC时间，单位ms</summary>
+        /// <summary>偏移。客户端UTC时间加上一半延迟再减服务端UTC时间，单位ms</summary>
         public static readonly Field Offset = FindByName("Offset");
 
         /// <summary>本地时间</summary>
@@ -703,6 +755,12 @@ public partial class NodeOnline
         /// <summary>本地IP</summary>
         public const String IP = "IP";
 
+        /// <summary>网关。IP地址和MAC</summary>
+        public const String Gateway = "Gateway";
+
+        /// <summary>DNS地址</summary>
+        public const String Dns = "Dns";
+
         /// <summary>分类</summary>
         public const String Category = "Category";
 
@@ -711,6 +769,12 @@ public partial class NodeOnline
 
         /// <summary>城市</summary>
         public const String CityID = "CityID";
+
+        /// <summary>地址。该节点所处地理地址</summary>
+        public const String Address = "Address";
+
+        /// <summary>位置。场地安装位置，或者经纬度</summary>
+        public const String Location = "Location";
 
         /// <summary>心跳</summary>
         public const String PingCount = "PingCount";
@@ -778,7 +842,7 @@ public partial class NodeOnline
         /// <summary>延迟。网络延迟，客户端最近一次心跳耗时的一半，单位ms</summary>
         public const String Delay = "Delay";
 
-        /// <summary>偏移。客户端UTC时间减服务端UTC时间，单位ms</summary>
+        /// <summary>偏移。客户端UTC时间加上一半延迟再减服务端UTC时间，单位ms</summary>
         public const String Offset = "Offset";
 
         /// <summary>本地时间</summary>

@@ -240,6 +240,8 @@ public partial class NodeOnline : Entity<NodeOnline>
         online.MACs = inf.Macs;
         //online.COMs = di.COMs;
         online.IP = inf.IP;
+        online.Gateway = inf.Gateway;
+        online.Dns = inf.Dns;
 
         if (inf.AvailableMemory > 0) online.AvailableMemory = (Int32)(inf.AvailableMemory / 1024 / 1024);
         if (inf.AvailableFreeSpace > 0) online.AvailableFreeSpace = (Int32)(inf.AvailableFreeSpace / 1024 / 1024);
@@ -274,13 +276,14 @@ public partial class NodeOnline : Entity<NodeOnline>
         {
             online.LocalTime = dt;
             //olt.Offset = (Int32)Math.Round((dt - DateTime.Now).TotalSeconds);
-            online.Offset = (Int32)(inf.Time - DateTime.UtcNow.ToLong());
+            online.Offset = (Int32)(inf.Time + (Delay / 2) - DateTime.UtcNow.ToLong());
         }
 
         if (!inf.Processes.IsNullOrEmpty()) online.Processes = inf.Processes;
         if (!inf.Macs.IsNullOrEmpty()) online.MACs = inf.Macs;
         //if (!inf.COMs.IsNullOrEmpty()) olt.COMs = inf.COMs;
         if (!inf.IP.IsNullOrEmpty()) online.IP = inf.IP;
+        if (!inf.Gateway.IsNullOrEmpty()) online.Gateway = inf.Gateway;
 
         //olt.Data = inf.ToJson();
         var dic = inf.ToDictionary();

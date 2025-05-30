@@ -12,6 +12,7 @@ using Stardust.Data.Configs;
 using Stardust.Models;
 using Stardust.Server.Services;
 using XCode;
+using XCode.Membership;
 using TokenService = Stardust.Server.Services.TokenService;
 using WebSocket = System.Net.WebSockets.WebSocket;
 
@@ -46,6 +47,8 @@ public class AppController : BaseController
     #region 令牌验证
     protected override Boolean OnAuthorize(String token)
     {
+        ManageProvider.UserHost = UserHost;
+
         var (jwt, app) = _tokenService.DecodeToken(token, _setting.TokenSecret);
         _app = app;
         _clientId = jwt.Id;
@@ -79,7 +82,7 @@ public class AppController : BaseController
         _app = app;
 
         // 设备不存在或者验证失败，执行注册流程
-        if (app != null && !_registryService.Auth(app, model.Secret, ip, model.ClientId))
+        if (app != null && !_registryService.Auth(app, model.Secret, ip, model.ClientId, set))
         {
             app = null;
         }

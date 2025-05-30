@@ -46,6 +46,10 @@ public class StarServerSetting : Config<StarServerSetting>, ITokenSetting
     [Description("会话超时。默认600秒")]
     public Int32 SessionTimeout { get; set; } = 600;
 
+    /// <summary>盐值偏差时间。客户端登录时使用当前时间加盐，如果跟服务端时间差距过大，将会导致密钥验证失败，默认600秒</summary>
+    [Description("盐值偏差时间。客户端登录时使用当前时间加盐，如果跟服务端时间差距过大，将会导致密钥验证失败，默认600秒")]
+    public Int32 SaltTime { get; set; } = 600;
+
     /// <summary>自动注册。允许节点客户端自动注册，默认true</summary>
     [Description("自动注册。允许节点客户端自动注册，默认true")]
     public Boolean AutoRegister { get; set; } = true;
@@ -117,6 +121,10 @@ public class StarServerSetting : Config<StarServerSetting>, ITokenSetting
     /// <summary>上级服务器。同步向上级汇报数据</summary>
     [Description("上级服务器。同步向上级汇报数据")]
     public String UplinkServer { get; set; }
+
+    /// <summary>固定城市。默认自动根据IP计算所在城市，开启后不再自动计算，改为人工设置</summary>
+    [Description("固定城市。默认自动根据IP计算所在城市，开启后不再自动计算，改为人工设置")]
+    public Boolean FixedCity { get; set; }
 
     ///// <summary>新服务器。节点自动迁移到新的服务器地址</summary>
     //[Description("新服务器。节点自动迁移到新的服务器地址")]

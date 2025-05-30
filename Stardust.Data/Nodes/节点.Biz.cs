@@ -547,6 +547,8 @@ public partial class Node : Entity<Node>
         }
         if (!info.UserName.IsNullOrEmpty()) node.UserName = info.UserName;
         if (!info.IP.IsNullOrEmpty()) node.IP = info.IP;
+        if (!info.Gateway.IsNullOrEmpty()) node.Gateway = info.Gateway;
+        if (!info.Dns.IsNullOrEmpty()) node.Dns = info.Dns;
         if (!info.Product.IsNullOrEmpty()) node.Product = info.Product;
         if (!info.Vendor.IsNullOrEmpty()) node.Vendor = info.Vendor;
         if (!info.Processor.IsNullOrEmpty()) node.Processor = info.Processor;
@@ -632,13 +634,43 @@ public partial class Node : Entity<Node>
     /// <summary>修正地区</summary>
     public void FixArea()
     {
+        // 借助节点所在网关，优先根据节点定位来确定位置
+        var location = NodeLocation.Match(IP, MACs, UpdateIP);
+        if (location == null)
+        {
+            var gws = Gateway?.Split('/');
+            if (gws != null && gws.Length >= 2)
+            {
+                location = NodeLocation.Match(gws[0], gws[1], UpdateIP);
+            }
+        }
+        if (location != null)
+        {
+            var area = location.Area;
+            if (area != null)
+            {
+                ProvinceID = area.GetAllParents().FirstOrDefault()?.ID ?? 0;
+                CityID = area.ID;
+            }
+
+            Address = location.Address;
+            Location = location.Location;
+
+            return;
+        }
+
         var node = this;
         if (node.UpdateIP.IsNullOrEmpty()) return;
 
         var rs = Area.SearchIP(node.UpdateIP);
-        if (rs.Count > 0) node.ProvinceID = rs[0].ID;
+        if (rs.Count > 0)
+        {
+            node.ProvinceID = rs[0].ID;
+            node.CityID = 0;
+        }
         if (rs.Count > 1) node.CityID = rs[^1].ID;
         if (0 >= node.CityID) { node.CityID = node.ProvinceID; }
+        Address = node.UpdateIP.IPToAddress()?.TrimStart("中国–");
     }
 
     /// <summary>

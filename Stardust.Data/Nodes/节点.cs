@@ -174,6 +174,24 @@ public partial class Node
     [BindColumn("IP", "本地IP", "")]
     public String IP { get => _IP; set { if (OnPropertyChanging("IP", value)) { _IP = value; OnPropertyChanged("IP"); } } }
 
+    private String _Gateway;
+    /// <summary>网关。IP地址和MAC</summary>
+    [Category("系统信息")]
+    [DisplayName("网关")]
+    [Description("网关。IP地址和MAC")]
+    [DataObjectField(false, false, true, 50)]
+    [BindColumn("Gateway", "网关。IP地址和MAC", "")]
+    public String Gateway { get => _Gateway; set { if (OnPropertyChanging("Gateway", value)) { _Gateway = value; OnPropertyChanged("Gateway"); } } }
+
+    private String _Dns;
+    /// <summary>DNS地址</summary>
+    [Category("系统信息")]
+    [DisplayName("DNS地址")]
+    [Description("DNS地址")]
+    [DataObjectField(false, false, true, 50)]
+    [BindColumn("Dns", "DNS地址", "")]
+    public String Dns { get => _Dns; set { if (OnPropertyChanging("Dns", value)) { _Dns = value; OnPropertyChanged("Dns"); } } }
+
     private Int32 _Cpu;
     /// <summary>CPU。处理器核心数</summary>
     [Category("硬件信息")]
@@ -364,30 +382,35 @@ public partial class Node
 
     private Int32 _ProvinceID;
     /// <summary>省份</summary>
-    [Category("参数设置")]
     [DisplayName("省份")]
     [Description("省份")]
     [DataObjectField(false, false, false, 0)]
-    [BindColumn("ProvinceID", "省份", "")]
+    [BindColumn("ProvinceID", "省份", "", ItemType = "area1")]
     public Int32 ProvinceID { get => _ProvinceID; set { if (OnPropertyChanging("ProvinceID", value)) { _ProvinceID = value; OnPropertyChanged("ProvinceID"); } } }
 
     private Int32 _CityID;
     /// <summary>城市</summary>
-    [Category("参数设置")]
     [DisplayName("城市")]
     [Description("城市")]
     [DataObjectField(false, false, false, 0)]
-    [BindColumn("CityID", "城市", "")]
+    [BindColumn("CityID", "城市", "", ItemType = "area2")]
     public Int32 CityID { get => _CityID; set { if (OnPropertyChanging("CityID", value)) { _CityID = value; OnPropertyChanged("CityID"); } } }
 
     private String _Address;
-    /// <summary>地址。该节点所处位置</summary>
-    [Category("参数设置")]
+    /// <summary>地址。该节点所处地理地址</summary>
     [DisplayName("地址")]
-    [Description("地址。该节点所处位置")]
+    [Description("地址。该节点所处地理地址")]
     [DataObjectField(false, false, true, 200)]
-    [BindColumn("Address", "地址。该节点所处位置", "")]
+    [BindColumn("Address", "地址。该节点所处地理地址", "")]
     public String Address { get => _Address; set { if (OnPropertyChanging("Address", value)) { _Address = value; OnPropertyChanged("Address"); } } }
+
+    private String _Location;
+    /// <summary>位置。场地安装位置，或者经纬度</summary>
+    [DisplayName("位置")]
+    [Description("位置。场地安装位置，或者经纬度")]
+    [DataObjectField(false, false, true, 50)]
+    [BindColumn("Location", "位置。场地安装位置，或者经纬度", "")]
+    public String Location { get => _Location; set { if (OnPropertyChanging("Location", value)) { _Location = value; OnPropertyChanged("Location"); } } }
 
     private Int32 _Period;
     /// <summary>采样周期。默认60秒</summary>
@@ -397,6 +420,15 @@ public partial class Node
     [DataObjectField(false, false, false, 0)]
     [BindColumn("Period", "采样周期。默认60秒", "")]
     public Int32 Period { get => _Period; set { if (OnPropertyChanging("Period", value)) { _Period = value; OnPropertyChanged("Period"); } } }
+
+    private Int32 _SyncTime;
+    /// <summary>同步时间。定期同步服务器时间到本地，默认0秒不同步</summary>
+    [Category("参数设置")]
+    [DisplayName("同步时间")]
+    [Description("同步时间。定期同步服务器时间到本地，默认0秒不同步")]
+    [DataObjectField(false, false, false, 0)]
+    [BindColumn("SyncTime", "同步时间。定期同步服务器时间到本地，默认0秒不同步", "")]
+    public Int32 SyncTime { get => _SyncTime; set { if (OnPropertyChanging("SyncTime", value)) { _SyncTime = value; OnPropertyChanged("SyncTime"); } } }
 
     private String _NewServer;
     /// <summary>新服务器。该节点自动迁移到新的服务器地址</summary>
@@ -622,6 +654,8 @@ public partial class Node
             "MachineName" => _MachineName,
             "UserName" => _UserName,
             "IP" => _IP,
+            "Gateway" => _Gateway,
+            "Dns" => _Dns,
             "Cpu" => _Cpu,
             "Memory" => _Memory,
             "TotalSize" => _TotalSize,
@@ -646,7 +680,9 @@ public partial class Node
             "ProvinceID" => _ProvinceID,
             "CityID" => _CityID,
             "Address" => _Address,
+            "Location" => _Location,
             "Period" => _Period,
+            "SyncTime" => _SyncTime,
             "NewServer" => _NewServer,
             "LastVersion" => _LastVersion,
             "Channel" => _Channel,
@@ -692,6 +728,8 @@ public partial class Node
                 case "MachineName": _MachineName = Convert.ToString(value); break;
                 case "UserName": _UserName = Convert.ToString(value); break;
                 case "IP": _IP = Convert.ToString(value); break;
+                case "Gateway": _Gateway = Convert.ToString(value); break;
+                case "Dns": _Dns = Convert.ToString(value); break;
                 case "Cpu": _Cpu = value.ToInt(); break;
                 case "Memory": _Memory = value.ToInt(); break;
                 case "TotalSize": _TotalSize = value.ToInt(); break;
@@ -716,7 +754,9 @@ public partial class Node
                 case "ProvinceID": _ProvinceID = value.ToInt(); break;
                 case "CityID": _CityID = value.ToInt(); break;
                 case "Address": _Address = Convert.ToString(value); break;
+                case "Location": _Location = Convert.ToString(value); break;
                 case "Period": _Period = value.ToInt(); break;
+                case "SyncTime": _SyncTime = value.ToInt(); break;
                 case "NewServer": _NewServer = Convert.ToString(value); break;
                 case "LastVersion": _LastVersion = Convert.ToString(value); break;
                 case "Channel": _Channel = (NodeChannels)value.ToInt(); break;
@@ -826,6 +866,12 @@ public partial class Node
         /// <summary>本地IP</summary>
         public static readonly Field IP = FindByName("IP");
 
+        /// <summary>网关。IP地址和MAC</summary>
+        public static readonly Field Gateway = FindByName("Gateway");
+
+        /// <summary>DNS地址</summary>
+        public static readonly Field Dns = FindByName("Dns");
+
         /// <summary>CPU。处理器核心数</summary>
         public static readonly Field Cpu = FindByName("Cpu");
 
@@ -895,11 +941,17 @@ public partial class Node
         /// <summary>城市</summary>
         public static readonly Field CityID = FindByName("CityID");
 
-        /// <summary>地址。该节点所处位置</summary>
+        /// <summary>地址。该节点所处地理地址</summary>
         public static readonly Field Address = FindByName("Address");
+
+        /// <summary>位置。场地安装位置，或者经纬度</summary>
+        public static readonly Field Location = FindByName("Location");
 
         /// <summary>采样周期。默认60秒</summary>
         public static readonly Field Period = FindByName("Period");
+
+        /// <summary>同步时间。定期同步服务器时间到本地，默认0秒不同步</summary>
+        public static readonly Field SyncTime = FindByName("SyncTime");
 
         /// <summary>新服务器。该节点自动迁移到新的服务器地址</summary>
         public static readonly Field NewServer = FindByName("NewServer");
@@ -1024,6 +1076,12 @@ public partial class Node
         /// <summary>本地IP</summary>
         public const String IP = "IP";
 
+        /// <summary>网关。IP地址和MAC</summary>
+        public const String Gateway = "Gateway";
+
+        /// <summary>DNS地址</summary>
+        public const String Dns = "Dns";
+
         /// <summary>CPU。处理器核心数</summary>
         public const String Cpu = "Cpu";
 
@@ -1093,11 +1151,17 @@ public partial class Node
         /// <summary>城市</summary>
         public const String CityID = "CityID";
 
-        /// <summary>地址。该节点所处位置</summary>
+        /// <summary>地址。该节点所处地理地址</summary>
         public const String Address = "Address";
+
+        /// <summary>位置。场地安装位置，或者经纬度</summary>
+        public const String Location = "Location";
 
         /// <summary>采样周期。默认60秒</summary>
         public const String Period = "Period";
+
+        /// <summary>同步时间。定期同步服务器时间到本地，默认0秒不同步</summary>
+        public const String SyncTime = "SyncTime";
 
         /// <summary>新服务器。该节点自动迁移到新的服务器地址</summary>
         public const String NewServer = "NewServer";

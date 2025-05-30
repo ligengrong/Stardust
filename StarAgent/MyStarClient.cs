@@ -1,9 +1,9 @@
 ﻿using System.Diagnostics;
-
 using NewLife;
 using NewLife.Agent;
 using NewLife.Agent.CommandHandler;
 using NewLife.Log;
+using NewLife.Model;
 using NewLife.Remoting.Clients;
 using NewLife.Remoting.Models;
 using NewLife.Serialization;
@@ -40,6 +40,22 @@ internal class MyStarClient : StarClient
     }
     #endregion
 
+    #region 方法
+    protected override void OnInit()
+    {
+        var provider = ServiceProvider ??= ObjectContainer.Provider;
+
+        // 找到容器，注册默认的模型实现，供后续InvokeAsync时自动创建正确的模型对象
+        var container = ModelExtension.GetService<IObjectContainer>(provider) ?? ObjectContainer.Current;
+        if (container != null)
+        {
+            container.AddTransient<IPingResponse, MyPingResponse>();
+        }
+
+        base.OnInit();
+    }
+    #endregion
+
     #region 登录
     public override void Open()
     {
@@ -68,6 +84,53 @@ internal class MyStarClient : StarClient
         }
 
         return request;
+    }
+    #endregion
+
+    #region 心跳
+    private DateTime _lastSync;
+    protected override async Task OnPing(Object state)
+    {
+        await base.OnPing(state);
+
+        var syncTime = AgentSetting.SyncTime;
+        if (syncTime > 0 && Span.TotalMilliseconds != 0)
+        {
+            var now = DateTime.Now;
+            if (_lastSync.AddSeconds(syncTime) < now)
+            {
+                _lastSync = now;
+
+                try
+                {
+                    // 同步时间
+                    SyncTime();
+                }
+                catch (Exception ex)
+                {
+                    WriteLog("同步时间失败：{0}", ex.Message);
+                }
+            }
+        }
+    }
+
+    public override async Task<IPingResponse> Ping(CancellationToken cancellationToken = default)
+    {
+        var rs = await base.Ping(cancellationToken);
+        if (rs is MyPingResponse mpr)
+        {
+            var set = AgentSetting;
+            var syncTime = mpr.SyncTime;
+            if (syncTime > 0 && syncTime != set.SyncTime)
+            {
+                WriteLog("同步时间间隔变更为：{0}秒", syncTime);
+
+                set.SyncTime = syncTime;
+                set.Save();
+            }
+        }
+
+        return rs;
     }
     #endregion
 
@@ -250,10 +313,71 @@ internal class MyStarClient : StarClient
 
         return "success " + argument;
     }
-    string ServiceCommand(string argument)
+
+    /// <summary>同步时间</summary>
+    public String SyncTime(String argument = null)
     {
-        Service.Main([argument]);
-        return "success";
+        var now = DateTime.Now;
+        var time = GetNow();
+
+        // 指令传达的参数可能指定了时间
+        if (!argument.IsNullOrEmpty())
+        {
+            var dt = argument.ToDateTime();
+            if (dt.Year > 2000 && dt.Year < 3000) time = dt;
+        }
+
+        var ts = now - time;
+        if (Math.Abs(ts.TotalMilliseconds) < 1000) return "无需同步";
+
+        var msg = $"同步时间为：{time.ToFullString()}，偏差：{ts}";
+        WriteLog(msg);
+        WriteEvent("info", "SyncTime", msg);
+        time = time.ToUniversalTime();
+
+        var rs = "不支持的系统！";
+        if (Runtime.Windows)
+        {
+            var st = new SYSTEMTIME
+            {
+                Year = (Int16)time.Year,
+                Month = (Int16)time.Month,
+                Day = (Int16)time.Day,
+                Hour = (Int16)time.Hour,
+                Minute = (Int16)time.Minute,
+                Second = (Int16)time.Second,
+                Milliseconds = (Int16)time.Millisecond
+            };
+
+            if (!SetSystemTime(ref st))
+                throw new InvalidOperationException("Unable to set system time.");
+
+            rs = "成功";
+        }
+        else if (Runtime.Linux)
+        {
+            rs = "date".Execute($"-u -s \"{time:yyyy-MM-dd HH:mm:ss}\"", 5_000);
+        }
+
+        WriteLog(rs);
+
+        return rs;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern Boolean SetSystemTime(ref SYSTEMTIME st);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SYSTEMTIME
+    {
+        public Int16 Year;
+        public Int16 Month;
+        public Int16 DayOfWeek;
+        public Int16 Day;
+        public Int16 Hour;
+        public Int16 Minute;
+        public Int16 Second;
+        public Int16 Milliseconds;
     }
     #endregion
 }

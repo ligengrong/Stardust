@@ -61,7 +61,7 @@ public class AppClient : ClientBase, IRegistry
     /// <summary>实例化</summary>
     public AppClient()
     {
-        Features = Features.Login | Features.Ping | Features.Notify | Features.CommandReply;
+        Features = Features.Login | Features.Logout | Features.Ping | Features.Notify | Features.CommandReply | Features.PostEvent;
         SetActions("App/");
 
         // 加载已保存数据
@@ -82,7 +82,7 @@ public class AppClient : ClientBase, IRegistry
             {
                 AppId ??= asm.Name;
                 AppName = asm.Title;
-                _version = asm.Version;
+                _version = asm.FileVersion;
             }
 
             ClientId = $"{NetHelper.MyIP()}@{Process.GetCurrentProcess().Id}";
@@ -182,24 +182,14 @@ public class AppClient : ClientBase, IRegistry
     /// <returns></returns>
     protected override async Task OnPing(Object state)
     {
-        DefaultSpan.Current = null;
-        using var span = Tracer?.NewSpan("AppPing");
-        try
-        {
-            // 向服务端发送心跳后，再向本地发送心跳
-            await base.OnPing(state).ConfigureAwait(false);
-            await PingLocal().ConfigureAwait(false);
+        // 向服务端发送心跳后，再向本地发送心跳
+        await base.OnPing(state).ConfigureAwait(false);
+        await PingLocal().ConfigureAwait(false);
 
-            if (!NetworkInterface.GetIsNetworkAvailable()) return;
+        if (!NetworkInterface.GetIsNetworkAvailable()) return;
 
-            await RefreshPublish().ConfigureAwait(false);
-            await RefreshConsume().ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            span?.SetError(ex, null);
-            Log?.Debug("{0}", ex);
-        }
+        await RefreshPublish().ConfigureAwait(false);
+        await RefreshConsume().ConfigureAwait(false);
     }
     #endregion
 
@@ -258,7 +248,7 @@ public class AppClient : ClientBase, IRegistry
 
             ClientId = ClientId,
             IP = ip,
-            Version = asmx?.Version,
+            Version = asmx?.FileVersion,
         };
 
         return service;

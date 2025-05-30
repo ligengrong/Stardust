@@ -1,5 +1,7 @@
-﻿using Microsoft.AspNetCore.Authorization;
+﻿using System.Text.Json;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using NewLife;
 using NewLife.Caching;
 using NewLife.Log;
@@ -12,6 +14,7 @@ using Stardust.Data.Nodes;
 using Stardust.Models;
 using Stardust.Server.Services;
 using XCode;
+using XCode.Membership;
 using TokenService = Stardust.Server.Services.TokenService;
 using WebSocket = System.Net.WebSockets.WebSocket;
 
@@ -25,16 +28,18 @@ public class NodeController : BaseController
     private String _clientId;
     private readonly ICacheProvider _cacheProvider;
     private readonly ITracer _tracer;
+    private readonly IOptions<JsonOptions> _jsonOptions;
     private readonly NodeService _nodeService;
     private readonly TokenService _tokenService;
     private readonly DeployService _deployService;
     private readonly NodeSessionManager _sessionManager;
     private readonly StarServerSetting _setting;
 
-    public NodeController(NodeService nodeService, TokenService tokenService, DeployService deployService, NodeSessionManager sessionManager, StarServerSetting setting, ICacheProvider cacheProvider, IServiceProvider serviceProvider, ITracer tracer) : base(serviceProvider)
+    public NodeController(NodeService nodeService, TokenService tokenService, DeployService deployService, NodeSessionManager sessionManager, StarServerSetting setting, ICacheProvider cacheProvider, IServiceProvider serviceProvider, ITracer tracer, IOptions<JsonOptions> jsonOptions) : base(serviceProvider)
     {
         _cacheProvider = cacheProvider;
         _tracer = tracer;
+        this._jsonOptions = jsonOptions;
         _nodeService = nodeService;
         _tokenService = tokenService;
         _deployService = deployService;
@@ -45,6 +50,8 @@ public class NodeController : BaseController
     #region 令牌验证
     protected override Boolean OnAuthorize(String token)
     {
+        ManageProvider.UserHost = UserHost;
+
         var (jwt, node, ex) = _nodeService.DecodeToken(token, _setting.TokenSecret);
         _node = node;
         _clientId = jwt.Id;
@@ -67,8 +74,16 @@ public class NodeController : BaseController
     #region 登录注销
     [AllowAnonymous]
     [HttpPost(nameof(Login))]
-    public LoginResponse Login(LoginInfo inf)
+    public LoginResponse Login(JsonElement data)
     {
+        // 由于客户端的多样性，这里需要手工控制序列化。某些客户端的节点信息跟密钥信息在同一层级。
+        var options = _jsonOptions.Value.JsonSerializerOptions;
+        var inf = data.Deserialize<LoginInfo>(options);
+        if (inf.Node == null || inf.Node.UUID.IsNullOrEmpty() && inf.Node.MachineGuid.IsNullOrEmpty() && inf.Node.Macs.IsNullOrEmpty())
+        {
+            inf.Node = data.Deserialize<NodeInfo>(options);
+        }
+
         var ip = UserHost;
         var code = inf.Code;
         var node = Node.FindByCode(code, true);
@@ -76,6 +91,19 @@ public class NodeController : BaseController
         _node = node;
 
         if (node != null && !node.Enable) throw new ApiException(99, "禁止登录");
+
+        // 支持自动识别2020年的XCoder版本，兼容性处理
+        if (inf.ProductCode.IsNullOrEmpty())
+        {
+            var installPath = inf.Node?.InstallPath;
+            if (!installPath.IsNullOrEmpty())
+            {
+                if (installPath.Contains("XCoder"))
+                    inf.ProductCode = "XCoder";
+                else if (installPath.Contains("CrazyCoder"))
+                    inf.ProductCode = "CrazyCoder";
+            }
+        }
 
         // 设备不存在或者验证失败，执行注册流程
         if (node != null && !_nodeService.Auth(node, inf.Secret, inf, ip, _setting))
@@ -127,7 +155,7 @@ public class NodeController : BaseController
     public PingResponse Ping(PingInfo inf)
     {
         var node = _node;
-        var rs = new PingResponse
+        var rs = new MyPingResponse
         {
             Time = inf.Time,
             ServerTime = DateTime.UtcNow.ToLong(),
@@ -139,6 +167,9 @@ public class NodeController : BaseController
         {
             rs.Period = node.Period;
             rs.NewServer = !node.NewServer.IsNullOrEmpty() ? node.NewServer : node.Project?.NewServer;
+
+            // 服务端设置节点的同步时间周期时，客户端会覆盖掉；服务端未设置时，不要覆盖客户端的同步参数
+            if (node.SyncTime > 0) rs.SyncTime = node.SyncTime;
 
             // 令牌有效期检查，10分钟内到期的令牌，颁发新令牌，以获取业务的连续性。
             //todo 这里将来由客户端提交刷新令牌，才能颁发新的访问令牌。

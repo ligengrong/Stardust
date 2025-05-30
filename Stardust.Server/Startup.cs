@@ -1,12 +1,14 @@
 ﻿using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Unicode;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using NewLife;
 using NewLife.Caching;
 using NewLife.Caching.Services;
 using NewLife.IP;
 using NewLife.Log;
 using NewLife.Remoting.Extensions;
+using NewLife.Security;
 using NewLife.Serialization;
 using Stardust.Data.Nodes;
 using Stardust.Extensions.Caches;
@@ -152,11 +154,14 @@ public class Startup
                 DAL.AddConnStr("StardustData", dal.ConnStr, null, dal.DbType + "");
             }
         }
-        EntityFactory.InitConnection("Stardust");
-        EntityFactory.InitConnection("StardustData");
+        //EntityFactory.InitConnection("Stardust");
+        //EntityFactory.InitConnection("StardustData");
 
         if (!DAL.ConnStrs.ContainsKey("Cube"))
             DAL.AddConnStr("Cube", "MapTo=Membership", null, "sqlite");
+
+        // 检查数据库表结构，阻塞主线程。在数据库检查完成之前，不提供对外服务，也不执行IHostedService
+        EntityFactory.InitAll();
 
         if (env.IsDevelopment())
         {
@@ -194,6 +199,8 @@ public class Startup
         {
             endpoints.MapControllers();
         });
+
+        XTrace.WriteLine("StarServer初始化完成");
 
         // 取得StarWeb地址
         Task.Run(() => ResolveWebUrl(app.ApplicationServices));

@@ -1,6 +1,7 @@
 ﻿using NewLife;
 using NewLife.Caching;
 using NewLife.Log;
+using NewLife.Net;
 using NewLife.Remoting;
 using NewLife.Remoting.Models;
 using NewLife.Security;
@@ -38,7 +39,7 @@ public class RegistryService
     /// <param name="clientId"></param>
     /// <returns></returns>
     /// <exception cref="ApiException"></exception>
-    public Boolean Auth(App app, String secret, String ip, String clientId)
+    public Boolean Auth(App app, String secret, String ip, String clientId, StarServerSetting setting)
     {
         if (app == null) return false;
 
@@ -54,6 +55,12 @@ public class RegistryService
         // 未设置密钥，直接通过
         if (app.Secret.IsNullOrEmpty()) return true;
         if (app.Secret == secret) return true;
+
+        if (setting.SaltTime > 0 && _passwordProvider is SaltPasswordProvider saltProvider)
+        {
+            // 使用盐值偏差时间，允许客户端时间与服务端时间有一定偏差
+            saltProvider.SaltTime = setting.SaltTime;
+        }
         if (secret.IsNullOrEmpty() || !_passwordProvider.Verify(app.Secret, secret))
         {
             app.WriteHistory("应用鉴权", false, "密钥校验失败", null, ip, clientId);
@@ -97,6 +104,14 @@ public class RegistryService
         }
 
         if (app.DisplayName.IsNullOrEmpty()) app.DisplayName = model.AppName;
+
+        // 比较编译时间，只要最新的
+        var compile = model.Compile.ToDateTime().ToLocalTime();
+        if (app.Compile < compile)
+        {
+            app.Compile = compile;
+            app.Version = model.Version;
+        }
 
         app.LastLogin = DateTime.Now;
         app.LastIP = ip;
@@ -576,7 +591,7 @@ public class RegistryService
         model.TraceId = DefaultSpan.Current + "";
 
         // 新版本使用UTC时间
-        if (!app.Version.IsNullOrEmpty() && Version.TryParse(app.Version, out var ver) && (ver.Build < 2000 || ver.Build > 2025))
+        if (app.Compile.Year >= 2025)
         {
             if (model.StartTime.Year > 2000)
                 model.StartTime = model.StartTime.ToUniversalTime();

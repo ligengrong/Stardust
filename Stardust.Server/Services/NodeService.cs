@@ -1,7 +1,5 @@
-﻿using System.Xml.Linq;
-using NewLife;
+﻿using NewLife;
 using NewLife.Caching;
-using NewLife.IP;
 using NewLife.Log;
 using NewLife.Remoting;
 using NewLife.Remoting.Models;
@@ -48,6 +46,12 @@ public class NodeService
         if (node.Secret.IsNullOrEmpty()) return true;
         if (node.Secret == secret) return true;
         //return !secret.IsNullOrEmpty() && !secret.IsNullOrEmpty() && (node.Secret == secret || node.Secret.MD5() == secret);
+
+        if (setting.SaltTime > 0 && _passwordProvider is SaltPasswordProvider saltProvider)
+        {
+            // 使用盐值偏差时间，允许客户端时间与服务端时间有一定偏差
+            saltProvider.SaltTime = setting.SaltTime;
+        }
         if (secret.IsNullOrEmpty() || !_passwordProvider.Verify(node.Secret, secret))
         {
             WriteHistory(node, "节点鉴权", false, "密钥校验失败", ip);
@@ -446,6 +450,8 @@ public class NodeService
         if (node == null) return null;
 
         if (!inf.IP.IsNullOrEmpty()) node.IP = inf.IP;
+        if (!inf.Gateway.IsNullOrEmpty()) node.Gateway = inf.Gateway;
+
         node.UpdateIP = ip;
         node.FixArea();
         node.FixNameByRule();
@@ -484,6 +490,8 @@ public class NodeService
         online.OSKind = node.OSKind;
         online.ProvinceID = node.ProvinceID;
         online.CityID = node.CityID;
+        online.Address = node.Address;
+        online.Location = node.Location;
         online.Save(null, inf, token, ip);
 
         //// 下发部署的应用服务
@@ -590,6 +598,8 @@ public class NodeService
         olt.Category = node.Category;
         olt.ProvinceID = node.ProvinceID;
         olt.CityID = node.CityID;
+        olt.Address = node.Address;
+        olt.Location = node.Location;
         olt.OSKind = node.OSKind;
         olt.Version = node.Version;
         olt.CompileTime = node.CompileTime;
@@ -598,6 +608,7 @@ public class NodeService
         //olt.COMs = node.COMs;
         olt.Token = token;
         olt.CreateIP = ip;
+        olt.UpdateIP = ip;
 
         olt.Creator = Environment.MachineName;
 
@@ -816,14 +827,13 @@ public class NodeService
     #endregion
 
     #region 辅助
-    private static Version _version = new(3, 1, 2025, 0103);
     private CommandModel BuildCommand(Node node, NodeCommand cmd)
     {
         var model = cmd.ToModel();
         model.TraceId = DefaultSpan.Current + "";
 
         // 新版本使用UTC时间
-        if (!node.Version.IsNullOrEmpty() && Version.TryParse(node.Version, out var ver) && ver >= _version)
+        if (node.CompileTime.Year >= 2025)
         {
             if (model.StartTime.Year > 2000)
                 model.StartTime = model.StartTime.ToUniversalTime();

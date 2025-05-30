@@ -26,6 +26,9 @@ public class ServiceController : DisposeBase
     /// <summary>服务名</summary>
     public String Name { get; set; } = null!;
 
+    /// <summary>应用编码</summary>
+    public String? AppId { get; set; }
+
     /// <summary>进程ID</summary>
     public Int32 ProcessId { get; set; }
 
@@ -133,6 +136,7 @@ public class ServiceController : DisposeBase
             var args = service.Arguments?.Trim();
             WriteLog("启动应用：{0} {1} workDir={2} Mode={3} Times={4}", file, args, workDir, service.Mode, _error);
             if (service.MaxMemory > 0) WriteLog("内存限制：{0:n0}M", service.MaxMemory);
+            if (!AppId.IsNullOrEmpty()) WriteLog("应用编码：{0}", AppId);
 
             var src = service.ZipFile ?? file;
             using var span = Tracer?.NewSpan("StartService", service);
@@ -143,8 +147,8 @@ public class ServiceController : DisposeBase
 
                 // 在环境变量中设置BasePath，不用担心影响当前进程，因为PathHelper仅读取一次
                 //Environment.SetEnvironmentVariable("BasePath", workDir);
-                if (DeployInfo != null && !DeployInfo.Name.IsNullOrEmpty())
-                    Environment.SetEnvironmentVariable("StarAppId", DeployInfo.Name);
+                //if (DeployInfo != null && !DeployInfo.Name.IsNullOrEmpty())
+                //    Environment.SetEnvironmentVariable("StarAppId", DeployInfo.Name);
 
                 // 工作模式
                 switch (service.Mode)
@@ -235,6 +239,7 @@ public class ServiceController : DisposeBase
         var deploy = new ZipDeploy
         {
             Name = Name,
+            AppId = AppId,
             FileName = file,
             WorkingDirectory = workDir,
 
@@ -286,6 +291,7 @@ public class ServiceController : DisposeBase
         var deploy = new ZipDeploy
         {
             Name = Name,
+            AppId = AppId,
             FileName = file,
             WorkingDirectory = workDir,
             UserName = service.UserName,
@@ -354,6 +360,9 @@ public class ServiceController : DisposeBase
             UseShellExecute = false,
         };
         si.EnvironmentVariables["BasePath"] = workDir;
+
+        if (!AppId.IsNullOrEmpty())
+            si.EnvironmentVariables["StarAppId"] = AppId;
 
         // 环境变量。不能用于ShellExecute
         if (service.Environments.IsNullOrEmpty() && !si.UseShellExecute)
