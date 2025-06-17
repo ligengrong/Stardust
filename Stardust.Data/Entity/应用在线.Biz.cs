@@ -4,12 +4,15 @@ using System.Linq;
 using System.Runtime.Serialization;
 using System.Web.Script.Serialization;
 using System.Xml.Serialization;
+
 using NewLife;
 using NewLife.Data;
 using NewLife.Log;
 using NewLife.Reflection;
+
 using Stardust.Data.Nodes;
 using Stardust.Models;
+
 using XCode;
 using XCode.Membership;
 
@@ -41,7 +44,24 @@ public partial class AppOnline : Entity<AppOnline>
         if (!Version.IsNullOrEmpty() && !Dirtys[nameof(Compile)])
         {
             var dt = AssemblyX.GetCompileTime(Version);
-            if (dt.Year > 2000) Compile = dt;
+            var y = DateTime.Now.Year;
+            if (dt.Year > y)
+            {
+                var ss = Version?.Split(['.']);
+                if (ss == null || ss.Length < 4) { Compile = DateTime.MinValue; }
+                else
+                {
+                    var year = $"{y}"[..2] + ss[2][..2];
+                    var month = ss[2].Substring(2, 2);
+                    var day = ss[2][4..];
+                    var hour = ss[3][..2];
+                    var minute = ss[3][2..];
+                    Compile = $"{year}-{month}-{day} {hour}:{minute}".ToDateTime();
+                }
+
+            }
+            else if (dt.Year > 2000 && dt.Year <= y) { Compile = dt; }
+
         }
 
         if (TraceId.IsNullOrEmpty()) TraceId = DefaultSpan.Current?.TraceId;
