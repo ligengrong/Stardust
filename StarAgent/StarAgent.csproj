@@ -25,13 +25,15 @@
     <SignAssembly>True</SignAssembly>
     <IsPackable>False</IsPackable>
     <NoWarn>1701;1702;NU5104;NETSDK1138;CS7035</NoWarn>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <Nullable>enable</Nullable>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)'=='Release'">
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
   <PropertyGroup Condition="'$(TargetFramework)'=='net8.0'">
     <!--<ServerGarbageCollection>true</ServerGarbageCollection>-->
-    <!--<GarbageCollectionAdapatationMode>1</GarbageCollectionAdapatationMode>-->
+    <!--<GarbageCollectionAdaptationMode>1</GarbageCollectionAdaptationMode>-->
     <!--<PublishAot>true</PublishAot>-->
     <!--<OptimizationPreference>Size</OptimizationPreference>-->
     <!--<InvariantGlobalization>true</InvariantGlobalization>-->
@@ -52,15 +54,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="NewLife.Agent" Version="10.12.2025.401" />
+    <PackageReference Include="NewLife.Agent" Version="10.13.2025.901" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Stardust\Stardust.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Folder Include="Managers\" />
   </ItemGroup>
 
 </Project>

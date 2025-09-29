@@ -1,5 +1,6 @@
 ﻿using System.Collections.Concurrent;
 using System.Diagnostics;
+
 using NewLife;
 using NewLife.Agent;
 using NewLife.Data;
@@ -9,6 +10,7 @@ using NewLife.Net;
 using NewLife.Remoting;
 using NewLife.Remoting.Models;
 using NewLife.Threading;
+
 using Stardust;
 using Stardust.Managers;
 using Stardust.Models;
@@ -82,7 +84,7 @@ public class StarService : DisposeBase, IApi
 
         var ai = _agentInfo ??= AgentInfo.GetLocal(true);
         ai.Server = set.Server;
-        ai.Services = Manager?.Services.Where(e => e.Enable || !e.Name.EqualIgnoreCase("test", "test2")).Select(e => e.Name).ToArray();
+        ai.Services = Manager?.Services?.Where(e => e.Enable || !e.Name.EqualIgnoreCase("test", "test2")).Select(e => e.Name).ToArray();
         ai.Code = AgentSetting.Code;
         ai.IP = AgentInfo.GetIps();
 
@@ -93,13 +95,13 @@ public class StarService : DisposeBase, IApi
         }
 
         // 更新应用服务
-        var controller = Manager?.QueryByProcess(info.ProcessId);
+        var controller = info == null ? null : Manager?.QueryByProcess(info.ProcessId);
         if (controller != null)
         {
             // 标记为星尘应用，停止Deploy上报进程信息
             controller.IsStarApp = true;
 
-            controller.WriteEvent("本地探测", raw);
+            controller.WriteEvent("本地探测", raw!);
         }
 
         // 返回插件服务器地址
@@ -116,7 +118,7 @@ public class StarService : DisposeBase, IApi
     /// <param name="info"></param>
     /// <returns></returns>
     [Api(nameof(Ping))]
-    public PingResponse Ping(LocalPingInfo info)
+    public IPingResponse Ping(LocalPingInfo info)
     {
         if (info != null && info.ProcessId > 0)
         {
@@ -153,6 +155,151 @@ public class StarService : DisposeBase, IApi
         }
 
         return set.Server;
+    }
+
+    /// <summary>获取所有服务列表</summary>
+    /// <returns></returns>
+    [Api(nameof(GetServices))]
+    public ServicesInfo GetServices()
+    {
+        CheckLocal();
+
+        var list = Manager.Services;
+        var runningList = Manager.RunningServices;
+
+        var result = new ServicesInfo
+        {
+            Services = list?.ToArray(),
+            RunningServices = runningList?.ToArray()
+        };
+
+        return result;
+    }
+
+    /// <summary>启动服务</summary>
+    /// <param name="serviceName">服务名称</param>
+    /// <returns></returns>
+    [Api("StartService")]
+    public ServiceOperationResult StartService(String serviceName)
+    {
+        CheckLocal();
+
+        if (serviceName.IsNullOrEmpty())
+        {
+            return new ServiceOperationResult { Success = false, Message = "服务名称不能为空" };
+        }
+
+        try
+        {
+            var result = Manager?.Start(serviceName);
+            return new ServiceOperationResult
+            {
+                Success = result ?? false,
+                Message = result == true ? "服务启动成功" : "服务启动失败或服务不存在",
+                ServiceName = serviceName
+            };
+        }
+        catch (Exception ex)
+        {
+            return new ServiceOperationResult
+            {
+                Success = false,
+                Message = $"启动服务时发生错误: {ex.Message}",
+                ServiceName = serviceName
+            };
+        }
+    }
+
+    /// <summary>停止服务</summary>
+    /// <param name="serviceName">服务名称</param>
+    /// <returns></returns>
+    [Api("StopService")]
+    public ServiceOperationResult StopService(String serviceName)
+    {
+        CheckLocal();
+
+        if (serviceName.IsNullOrEmpty())
+        {
+            return new ServiceOperationResult { Success = false, Message = "服务名称不能为空" };
+        }
+
+        try
+        {
+            var result = Manager?.Stop(serviceName, "API调用停止");
+            return new ServiceOperationResult
+            {
+                Success = result ?? false,
+                Message = result == true ? "服务停止成功" : "服务停止失败或服务不存在",
+                ServiceName = serviceName
+            };
+        }
+        catch (Exception ex)
+        {
+            return new ServiceOperationResult
+            {
+                Success = false,
+                Message = $"停止服务时发生错误: {ex.Message}",
+                ServiceName = serviceName
+            };
+        }
+    }
+
+    /// <summary>重启服务</summary>
+    /// <param name="serviceName">服务名称</param>
+    /// <returns></returns>
+    [Api("RestartService")]
+    public ServiceOperationResult RestartService(String serviceName)
+    {
+        CheckLocal();
+
+        if (serviceName.IsNullOrEmpty())
+        {
+            return new ServiceOperationResult { Success = false, Message = "服务名称不能为空" };
+        }
+
+        try
+        {
+            // 使用共同的重启逻辑
+            var success = InternalRestartService(Manager, serviceName, "API调用重启");
+
+            // 根据结果提供更详细的信息
+            var message = success ? "服务重启成功" : GetRestartFailureMessage(Manager, serviceName);
+
+            return new ServiceOperationResult
+            {
+                Success = success,
+                Message = message,
+                ServiceName = serviceName
+            };
+        }
+        catch (Exception ex)
+        {
+            return new ServiceOperationResult
+            {
+                Success = false,
+                Message = $"重启服务时发生错误: {ex.Message}",
+                ServiceName = serviceName
+            };
+        }
+    }
+
+    /// <summary>获取重启失败的详细原因</summary>
+    private static String GetRestartFailureMessage(ServiceManager manager, String serviceName)
+    {
+        if (manager?.Services?.Any(e => e.Name.EqualIgnoreCase(serviceName)) != true)
+        {
+            return "服务不存在";
+        }
+
+        var isRunning = manager.RunningServices?.Any(e => e.Name.EqualIgnoreCase(serviceName)) == true;
+        if (isRunning)
+        {
+            return "服务重启失败：停止服务失败";
+        }
+        else
+        {
+            return "服务重启失败：启动服务失败";
+        }
     }
 
     private void DoRefreshLocal(Object state)
@@ -327,11 +474,49 @@ public class StarService : DisposeBase, IApi
                 {
                     XTrace.WriteLine("进程[{0}/{1}]超过一定时间没有心跳，可能已经假死，准备重启。", p.ProcessName, p.Id);
 
-                    span?.AppendTag($"SafetyKill {p.ProcessName}/{p.Id}");
-                    p.SafetyKill();
+                    var restartSuccess = false;
+
+                    // 优先尝试通过服务重启
+                    if (state is ServiceManager manager)
+                    {
+                        try
+                        {
+                            // 通过进程ID查找对应的服务控制器
+                            var controller = manager.QueryByProcess(item);
+                            if (controller != null && !controller.Name.IsNullOrEmpty())
+                            {
+                                XTrace.WriteLine("尝试通过服务重启：{0}", controller.Name);
+                                span?.AppendTag($"RestartService {controller.Name}");
+
+                                // 使用共同的重启逻辑
+                                restartSuccess = InternalRestartService(manager, controller.Name, "看门狗重启");
+
+                                if (restartSuccess)
+                                {
+                                    XTrace.WriteLine("服务[{0}]重启成功", controller.Name);
+                                }
+                                else
+                                {
+                                    XTrace.WriteLine("服务[{0}]重启失败", controller.Name);
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            XTrace.WriteException(ex);
+                        }
+                    }
+
+                    // 如果服务重启失败，则使用原有的SafetyKill方法
+                    if (!restartSuccess)
+                    {
+                        XTrace.WriteLine("服务重启失败，使用SafetyKill强制杀死进程[{0}/{1}]", p.ProcessName, p.Id);
+                        span?.AppendTag($"SafetyKill {p.ProcessName}/{p.Id}");
+                        p.SafetyKill();
+                    }
 
                     //todo 启动应用。暂时不需要，因为StarAgent会自动启动
-                    if (state is ServiceManager manager) manager.CheckNow();
+                    if (state is ServiceManager manager2) manager2.CheckNow();
                 }
             }
             catch (Exception ex)
@@ -348,7 +533,7 @@ public class StarService : DisposeBase, IApi
         }
     }
 
-    static Process GetProcessById(Int32 processId)
+    static Process? GetProcessById(Int32 processId)
     {
         try
         {
@@ -371,5 +556,85 @@ public class StarService : DisposeBase, IApi
     /// <param name="format"></param>
     /// <param name="args"></param>
     public void WriteLog(String format, params Object[] args) => Log?.Info(format, args);
+    #endregion
+
+    #region 内部方法
+    /// <summary>内部服务重启方法</summary>
+    /// <param name="manager">服务管理器</param>
+    /// <param name="serviceName">服务名称</param>
+    /// <param name="reason">重启原因</param>
+    /// <returns>是否成功</returns>
+    private static Boolean InternalRestartService(ServiceManager manager, String serviceName, String reason = "重启")
+    {
+        if (manager == null || serviceName.IsNullOrEmpty()) return false;
+
+        using var span = DefaultTracer.Instance?.NewSpan(nameof(InternalRestartService), new { serviceName, reason });
+
+        try
+        {
+            // 检查服务是否存在
+            var service = manager.Services?.FirstOrDefault(e => e.Name.EqualIgnoreCase(serviceName));
+            if (service == null)
+            {
+                XTrace.WriteLine("服务重启失败：服务[{0}]不存在", serviceName);
+                span?.AppendTag("ServiceNotFound");
+                return false;
+            }
+
+            // 检查服务是否正在运行
+            var runningServices = manager.RunningServices;
+            var isRunning = runningServices?.Any(e => e.Name.EqualIgnoreCase(serviceName)) == true;
+
+            XTrace.WriteLine("开始重启服务[{0}]，当前状态：{1}，原因：{2}", serviceName, isRunning ? "运行中" : "已停止", reason);
+
+            if (isRunning)
+            {
+                // 服务正在运行，先停止服务
+                XTrace.WriteLine("停止服务[{0}]", serviceName);
+                span?.AppendTag("StopService");
+
+                var stopResult = manager.Stop(serviceName, reason);
+                if (stopResult != true)
+                {
+                    XTrace.WriteLine("服务重启失败：无法停止服务[{0}]", serviceName);
+                    span?.AppendTag("StopFailed");
+                    return false;
+                }
+
+                XTrace.WriteLine("服务[{0}]停止成功，等待1秒后启动", serviceName);
+                // 等待服务完全停止
+                Thread.Sleep(1000);
+            }
+            else
+            {
+                XTrace.WriteLine("服务[{0}]未运行，直接启动", serviceName);
+                span?.AppendTag("DirectStart");
+            }
+
+            // 启动服务（无论之前是否运行）
+            XTrace.WriteLine("启动服务[{0}]", serviceName);
+            span?.AppendTag("StartService");
+
+            var startResult = manager.Start(serviceName);
+            if (startResult == true)
+            {
+                XTrace.WriteLine("服务[{0}]重启成功", serviceName);
+                span?.AppendTag("Success");
+                return true;
+            }
+            else
+            {
+                XTrace.WriteLine("服务重启失败：无法启动服务[{0}]", serviceName);
+                span?.AppendTag("StartFailed");
+                return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            XTrace.WriteLine("服务[{0}]重启时发生异常：{1}", serviceName, ex.Message);
+            span?.SetError(ex, null);
+            return false;
+        }
+    }
     #endregion
 }

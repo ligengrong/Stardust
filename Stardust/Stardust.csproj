@@ -32,7 +32,7 @@
     <RepositoryUrl>https://github.com/NewLifeX/Stardust</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>新生命团队;X组件;NewLife;$(AssemblyName)</PackageTags>
-    <PackageReleaseNotes>支持应用在单节点多实例部署；使用ISessionManager管理下发指令</PackageReleaseNotes>
+    <PackageReleaseNotes>增加网络质量监控</PackageReleaseNotes>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
@@ -119,10 +119,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="NewLife.Remoting" Version="3.3.2025.527-beta1716" />
+    <PackageReference Include="NewLife.Remoting" Version="3.5.2025.915-beta1636" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="NewLife.Core" Version="11.5.2025.528-beta1149" />
+    <PackageReference Include="NewLife.Core" Version="11.6.2025.914-beta0534" />
   </ItemGroup>
 
 </Project>

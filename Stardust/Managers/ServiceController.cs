@@ -4,6 +4,7 @@ using NewLife.Agent.Windows;
 using NewLife.Log;
 using NewLife.Remoting.Clients;
 using NewLife.Threading;
+using StarAgent.Managers;
 using Stardust.Deployment;
 using Stardust.Models;
 #if !NET40
@@ -25,6 +26,9 @@ public class ServiceController : DisposeBase
 
     /// <summary>服务名</summary>
     public String Name { get; set; } = null!;
+
+    /// <summary>服务管理器</summary>
+    public ServiceManager? Manager { get; set; }
 
     /// <summary>应用编码</summary>
     public String? AppId { get; set; }
@@ -166,7 +170,7 @@ public class ServiceController : DisposeBase
                         }
                     case ServiceModes.ExtractAndRun:
                         {
-                            WriteLog("解压后在工作目录运行");
+                            WriteLog("解压后在工作目录运行，发布模式：{0}", DeployInfo?.Mode);
                             var deploy = Extract(src, args, workDir, false);
                             if (deploy == null) throw new Exception("解压缩失败");
 
@@ -217,6 +221,25 @@ public class ServiceController : DisposeBase
 
                 // 此时还不能清零，因为进程可能不稳定，待定时器检测可靠后清零
                 //_error = 0;
+
+                // 检查nginx配置文件，如果存在，则发布nginx配置
+                var sites = NginxDeploy.DetectNginxConfig(workDir).ToList();
+                if (sites.Count > 0)
+                {
+                    WriteLog("Nginx配置目录：{0}", sites[0].ConfigPath);
+                    WriteLog("Nginx扩展名：{0}", sites[0].Extension);
+
+                    if (!sites[0].ConfigPath.IsNullOrEmpty())
+                    {
+                        foreach (var site in sites)
+                        {
+                            WriteLog("站点：{0}", site.SiteFile);
+                            site.Log = new ActionLog(WriteLog);
+                            var rs = site.Publish();
+                            WriteLog("站点发布{0}！", rs ? "成功" : "无变化");
+                        }
+                    }
+                }
 
                 return true;
             }
@@ -296,6 +319,8 @@ public class ServiceController : DisposeBase
             WorkingDirectory = workDir,
             UserName = service.UserName,
             Environments = service.Environments,
+            Priority = service.Priority,
+            StartupHook = Manager?.StartupHook ?? false,
 
             Tracer = Tracer,
             Log = new ActionLog(WriteLog),
@@ -361,11 +386,25 @@ public class ServiceController : DisposeBase
         };
         si.EnvironmentVariables["BasePath"] = workDir;
 
+        // 向未使用星尘的目标.Net应用注入星尘
+        var hook = Manager?.StartupHook ?? false;
+        if (hook && (service.UserName.IsNullOrEmpty() || service.UserName == Environment.UserName || Runtime.Windows))
+        {
+            var targets = Directory.GetFiles(workDir, "*", SearchOption.TopDirectoryOnly);
+            if (targets.Any(e => e.EndsWithIgnoreCase(".runtimeconfig.json")) &&
+                !targets.Any(e => e.EqualIgnoreCase("Stardust.dll")))
+            {
+                var dll = "Stardust.dll".GetFullPath();
+                WriteLog("执行目录：{0}，注入：{1}", workDir, dll);
+                si.EnvironmentVariables["DOTNET_STARTUP_HOOKS"] = dll;
+            }
+        }
+
         if (!AppId.IsNullOrEmpty())
             si.EnvironmentVariables["StarAppId"] = AppId;
 
         // 环境变量。不能用于ShellExecute
-        if (service.Environments.IsNullOrEmpty() && !si.UseShellExecute)
+        if (!service.Environments.IsNullOrEmpty() && !si.UseShellExecute)
         {
             foreach (var item in service.Environments.SplitAsDictionary("=", ";"))
             {
@@ -381,15 +420,15 @@ public class ServiceController : DisposeBase
         }
 
         // 指定用户时，以特定用户启动进程
-        if (!service.UserName.IsNullOrEmpty())
+        var user = service.UserName;
+        if (!user.IsNullOrEmpty())
         {
-            si.UserName = service.UserName;
+            si.UserName = user;
             //si.UseShellExecute = false;
 
             // 在Linux系统中，改变目录所属用户
             if (Runtime.Linux)
             {
-                var user = service.UserName;
                 if (!user.Contains(':')) user = $"{user}:{user}";
                 //Process.Start("chown", $"-R {user} {si.WorkingDirectory}");
                 Process.Start("chown", $"-R {user} {si.WorkingDirectory.CombinePath("../").GetBasePath()}").WaitForExit(5_000);
@@ -418,19 +457,19 @@ public class ServiceController : DisposeBase
         Process? p = null;
 
         // Windows桌面用户运行
-        if (Runtime.Windows && (service.UserName == "$" || service.UserName == "$$"))
+        if (Runtime.Windows && (user == "$" || user == "$$"))
         {
             // 交互模式直接运行
             if (Environment.UserInteractive)
             {
-                si.UserName = null;
+                si.UserName = null!;
                 p = Process.Start(si);
             }
             else
             {
                 // 桌面用户运行
                 var desktop = new Desktop { Log = Log };
-                var pid = desktop.StartProcess(si.FileName, si.Arguments, si.WorkingDirectory, service.UserName == "$$", true);
+                var pid = desktop.StartProcess(si.FileName, si.Arguments, si.WorkingDirectory, user == "$$", true);
                 p = Process.GetProcessById((Int32)pid);
             }
         }
@@ -438,6 +477,23 @@ public class ServiceController : DisposeBase
         {
             p = Process.Start(si);
         }
+
+        // 进程优先级
+        if (p != null && service.Priority != ProcessPriority.Normal)
+        {
+            WriteLog("优先级：{0}", service.Priority);
+            p.PriorityClass = service.Priority switch
+            {
+                ProcessPriority.Idle => ProcessPriorityClass.Idle,
+                ProcessPriority.BelowNormal => ProcessPriorityClass.BelowNormal,
+                ProcessPriority.Normal => ProcessPriorityClass.Normal,
+                ProcessPriority.AboveNormal => ProcessPriorityClass.AboveNormal,
+                ProcessPriority.High => ProcessPriorityClass.High,
+                ProcessPriority.RealTime => ProcessPriorityClass.RealTime,
+                _ => ProcessPriorityClass.Normal,
+            };
+        }
+
         if (StartWait > 0 && p != null && p.WaitForExit(StartWait) && p.ExitCode != 0)
         {
             WriteLog("启动失败！ExitCode={0}", p.ExitCode);
@@ -643,7 +699,7 @@ public class ServiceController : DisposeBase
         if (p != null && EventProvider is StarClient client && !IsStarApp)
         {
             if (_appInfo == null || _appInfo.Id != p.Id)
-                _appInfo = new AppInfo(p) { AppName = inf.Name };
+                _appInfo = new AppInfo(p) { AppName = DeployInfo?.Name ?? inf.Name };
             else
                 _appInfo.Refresh();
 
@@ -712,7 +768,20 @@ public class ServiceController : DisposeBase
         WriteLog("应用[{0}/{1}]已启动（{2}），直接接管", p.Id, Name, reason);
 
         SetProcess(p);
-        if (Info != null) StartMonitor();
+        var service = Info;
+        if (service != null)
+        {
+            var fileName = service.FileName;
+            try
+            {
+                fileName = p.MainModule?.FileName ?? service.FileName;
+            }
+            catch { }
+
+            CheckStarApp(Path.GetDirectoryName(fileName)!, service.WorkingDirectory!);
+
+            StartMonitor();
+        }
 
         if (StartTime.Year < 2000) StartTime = DateTime.Now;
 

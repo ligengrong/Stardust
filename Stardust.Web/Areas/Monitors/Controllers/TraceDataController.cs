@@ -35,9 +35,9 @@ public class TraceDataController : ReadOnlyEntityController<TraceData>
         var time = p["time"].ToDateTime();
         if (start.Year < 2000 && end.Year < 2000) start = end = time;
 
-        //todo 待更新NewLife.Core修复雪花算法后，后面两行可以注释
-        if (start.Year > 2000) start = new DateTime(start.Year, start.Month, start.Day, start.Hour, start.Minute, start.Second, DateTimeKind.Local);
-        if (end.Year > 2000) end = new DateTime(end.Year, end.Month, end.Day, end.Hour, end.Minute, end.Second, DateTimeKind.Local);
+        ////todo 待更新NewLife.Core修复雪花算法后，后面两行可以注释
+        //if (start.Year > 2000) start = new DateTime(start.Year, start.Month, start.Day, start.Hour, start.Minute, start.Second, DateTimeKind.Local);
+        //if (end.Year > 2000) end = new DateTime(end.Year, end.Month, end.Day, end.Hour, end.Minute, end.Second, DateTimeKind.Local);
 
         if (start.Year < 2000 && end.Year < 2000)
         {
@@ -53,7 +53,7 @@ public class TraceDataController : ReadOnlyEntityController<TraceData>
 
         var list = TraceData.Search(appId, itemId, clientId, name, kind, minError, searchTag, start, end, p["Q"], p);
 
-        if (list.Count > 0 && appId > 0 && itemId > 0)
+        if (list.Count > 1 && appId > 0 && itemId > 0)
         {
             var list2 = list.OrderBy(e => e.StartTime).ToList();
 
@@ -68,14 +68,14 @@ public class TraceDataController : ReadOnlyEntityController<TraceData>
                 };
                 chart.SetX(list2, _.StartTime, e => e.StartTime.ToDateTime().ToLocalTime().ToFullString());
                 //chart.SetY("次数");
-                chart.YAxis = new[] {
-                    new { name = "调用次数", type = "value" },
-                    new { name = "错误数", type = "value" }
-                };
+                chart.YAxis = [
+                    new YAxis{ Name = "调用次数", Type = "value" },
+                    new YAxis{ Name = "错误数", Type = "value" }
+                ];
                 chart.AddLine(list2, _.Total, null, true);
 
                 var line = chart.Add(list2, _.Errors);
-                line["yAxisIndex"] = 1;
+                line.YAxisIndex = 1;
                 line["itemStyle"] = new { color = "rgba(255, 0, 0, 0.5)", };
 
                 chart.SetTooltip();
@@ -90,15 +90,15 @@ public class TraceDataController : ReadOnlyEntityController<TraceData>
                 };
                 chart.SetX(list2, _.StartTime, e => e.StartTime.ToDateTime().ToLocalTime().ToFullString());
                 //chart.SetY("耗时");
-                chart.YAxis = new[] {
-                    new { name = "耗时（ms）", type = "value" },
-                    new { name = "最大耗时（ms）", type = "value" }
-                };
+                chart.YAxis = [
+                    new YAxis{ Name = "耗时（ms）", Type = "value" },
+                    new YAxis{ Name = "最大耗时（ms）", Type = "value" }
+                ];
                 chart.AddLine(list2, _.Cost, null, true);
                 chart.Add(list2, _.MinCost);
 
                 var line = chart.Add(list2, _.MaxCost);
-                line["yAxisIndex"] = 1;
+                line.YAxisIndex = 1;
 
                 chart.SetTooltip();
                 ViewBag.Charts2 = new[] { chart };

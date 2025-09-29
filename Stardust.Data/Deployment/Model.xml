@@ -52,10 +52,13 @@
         <Column Name="MultiVersion" DataType="Boolean" Description="多版本。支持多运行时版本，此时只认可部署版本中符合运行时要求的最新可用版本" />
         <Column Name="AutoPublish" DataType="Boolean" Description="自动发布。应用版本后自动发布到启用节点，加快发布速度" />
         <Column Name="PackageName" DataType="String" Description="包名。用于判断上传包名是否正确，避免错误上传其它应用包，支持*模糊匹配" />
+        <Column Name="Port" DataType="Int32" Description="监听端口。应用自身监听的端口，如果是dotnet应用会增加urls参数" />
+        <Column Name="Urls" DataType="String" Description="服务地址。对外提供服务的域名端口地址，自动生成nginx配置，如https://sso.newlifex.com" />
         <Column Name="Repository" DataType="String" ItemType="url" Length="200" Description="代码库。下载代码的位置" Category="编译参数" />
         <Column Name="Branch" DataType="String" DefaultValue="master" Description="分支。默认master" Category="编译参数" />
-        <Column Name="ProjectPath" DataType="String" Description="项目路径。需要编译的项目路径" Category="编译参数" />
+        <Column Name="ProjectPath" DataType="String" Description="项目路径。需要编译的项目路径，相对于代码库根目录" Category="编译参数" />
         <Column Name="ProjectKind" DataType="Int32" DefaultValue="1" Description="项目类型。默认dotnet" Type="Stardust.Models.ProjectKinds" Category="编译参数" />
+        <Column Name="BuildArgs" DataType="String" Length="200" Description="编译参数。编译项目时所需参数" Category="编译参数" />
         <Column Name="PackageFilters" DataType="String" Description="打包过滤器。需要打包哪些文件，支持通配符，多项分号隔开" Category="编译参数" />
         <Column Name="FileName" DataType="String" Description="文件。应用启动文件，可直接使用zip包" Category="发布参数" />
         <Column Name="Arguments" DataType="String" Length="500" Description="参数。启动应用的参数" Category="发布参数" />
@@ -63,6 +66,7 @@
         <Column Name="UserName" DataType="String" Description="用户名。以该用户执行应用" Category="发布参数" />
         <Column Name="Environments" DataType="String" Length="500" Description="环境变量。启动应用前设置的环境变量" Category="发布参数" />
         <Column Name="MaxMemory" DataType="Int32" Description="最大内存。单位M，超过上限时自动重启应用，默认0不限制" Category="发布参数" />
+        <Column Name="Priority" DataType="Int32" Description="优先级。表示应用程序中任务或操作的优先级级别" Type="Stardust.Models.ProcessPriority" Category="发布参数" />
         <Column Name="Mode" DataType="Int32" Description="工作模式。0默认exe/zip；1仅解压；2解压后运行；3仅运行一次；4多实例exe/zip" Type="Stardust.Models.ServiceModes" Category="发布参数" />
         <Column Name="AutoStop" DataType="Boolean" Description="自动停止。随着宿主的退出，同时停止该应用进程" Category="发布参数" />
         <Column Name="ReloadOnChange" DataType="Boolean" Description="检测变动。当文件发生改变时，自动重启应用" Category="发布参数" />
@@ -87,15 +91,19 @@
         <Column Name="NodeId" DataType="Int32" Description="节点。节点服务器" />
         <Column Name="IP" DataType="String" Description="IP地址。节点所在内网IP地址" />
         <Column Name="Enable" DataType="Boolean" Description="启用" />
+        <Column Name="Port" DataType="Int32" Description="应用端口。应用自身监听的端口，如果是dotnet应用会增加urls参数" />
         <Column Name="FileName" DataType="String" Description="文件。应用启动文件，可直接使用zip包，支持差异定制，为空时使用应用集配置" Category="发布参数" />
         <Column Name="Arguments" DataType="String" Length="500" Description="参数。启动应用的参数，为空时使用应用集配置" Category="发布参数" />
         <Column Name="WorkingDirectory" DataType="String" Length="200" Description="工作目录。应用根目录，为空时使用应用集配置" Category="发布参数" />
+        <Column Name="UserName" DataType="String" Description="用户名。以该用户执行应用" Category="发布参数" />
         <Column Name="Environments" DataType="String" Length="500" Description="环境变量。启动应用前设置的环境变量" Category="发布参数" />
+        <Column Name="MaxMemory" DataType="Int32" Description="最大内存。单位M，超过上限时自动重启应用，默认0不限制" Category="发布参数" />
+        <Column Name="Priority" DataType="Int32" Description="优先级。表示应用程序中任务或操作的优先级级别" Type="Stardust.Models.ProcessPriority" Category="发布参数" />
         <Column Name="Mode" DataType="Int32" Description="工作模式。0默认exe/zip；1仅解压；2解压后运行；3仅运行一次；4多实例exe/zip。为空时使用应用集配置" Type="Stardust.Models.ServiceModes" Category="发布参数" />
         <Column Name="Delay" DataType="Int32" Description="延迟。批量发布时，需要延迟执行的时间，用于滚动发布，单位秒" Category="发布参数" />
         <Column Name="ProcessId" DataType="Int32" Description="进程" Category="状态" />
-        <Column Name="UserName" DataType="String" Description="用户名。启动该进程的用户名" Category="状态" />
         <Column Name="ProcessName" DataType="String" Length="200" Description="进程名称" Category="状态" />
+        <Column Name="ProcessUser" DataType="String" Description="进程用户。启动该进程的用户名" Category="状态" />
         <Column Name="StartTime" DataType="DateTime" Description="进程时间" Category="状态" />
         <Column Name="Version" DataType="String" Description="版本。客户端" Category="状态" />
         <Column Name="Compile" DataType="DateTime" Description="编译时间。客户端" Category="状态" />
@@ -128,6 +136,7 @@
         <Column Name="Size" DataType="Int64" ItemType="GMK" Description="文件大小" />
         <Column Name="Hash" DataType="String" Description="文件哈希。MD5散列，避免下载的文件有缺失" />
         <Column Name="Runtime" DataType="Int32" Description="运行时。RID是运行时标识符，用于标识应用程序运行所在的目标平台。如win-x64/linux-arm" Type="Stardust.Models.RuntimeIdentifier" />
+        <Column Name="TargetFramework" DataType="String" Description="目标框架。TFM目标运行时框架，如net8.0" />
         <Column Name="Progress" DataType="String" Description="进度。发布进度" />
         <Column Name="CommitId" DataType="String" Description="提交标识" Category="编译参数" />
         <Column Name="CommitLog" DataType="String" Description="提交记录" Category="编译参数" />
@@ -162,6 +171,31 @@
         <Index Columns="DeployId,Id" />
         <Index Columns="DeployId,Action,Id" />
         <Index Columns="NodeId,Id" />
+      </Indexes>
+    </Table>
+    <Table Name="AppBuildNode" Description="编译节点。应用部署集和编译节点的关系，一个应用可有多个部署集如arm和x64，在目标节点上发布该部署集对应的应用zip包">
+      <Columns>
+        <Column Name="Id" DataType="Int32" Identity="True" PrimaryKey="True" Description="编号" />
+        <Column Name="DeployId" ColumnName="AppId" DataType="Int32" Map="AppDeploy@Id@$" Description="应用部署集。对应AppDeploy" />
+        <Column Name="NodeId" DataType="Int32" Description="节点。节点服务器" />
+        <Column Name="Enable" DataType="Boolean" Description="启用" />
+        <Column Name="SourcePath" DataType="String" Description="源代码目录" />
+        <Column Name="PullCode" DataType="Boolean" Description="拉取源代码" />
+        <Column Name="BuildProject" DataType="Boolean" Description="编译项目" />
+        <Column Name="PackageOutput" DataType="Boolean" Description="打包输出" />
+        <Column Name="UploadPackage" DataType="Boolean" Description="上传应用包" />
+        <Column Name="TraceId" DataType="String" Description="追踪。最新一次查看采样，可用于关联多个片段，建立依赖关系，随线程上下文、Http、Rpc传递" Category="扩展" />
+        <Column Name="CreateUserId" DataType="Int32" Description="创建人" Category="扩展" />
+        <Column Name="CreateTime" DataType="DateTime" Description="创建时间" Category="扩展" />
+        <Column Name="CreateIP" DataType="String" Description="创建地址" Category="扩展" />
+        <Column Name="UpdateUserId" DataType="Int32" Description="更新者" Category="扩展" />
+        <Column Name="UpdateTime" DataType="DateTime" Description="更新时间" Category="扩展" />
+        <Column Name="UpdateIP" DataType="String" Description="更新地址" Category="扩展" />
+        <Column Name="Remark" DataType="String" Length="500" Description="备注" Category="扩展" />
+      </Columns>
+      <Indexes>
+        <Index Columns="DeployId" />
+        <Index Columns="NodeId" />
       </Indexes>
     </Table>
     <Table Name="Attachment" Description="附件。用于记录各系统模块使用的文件，可以是Local/NAS/OSS等，对应魔方附件表" ConnName="Cube">

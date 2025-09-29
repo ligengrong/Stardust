@@ -1,5 +1,6 @@
 ﻿using NewLife;
 using NewLife.Log;
+using NewLife.Remoting.Models;
 using NewLife.Threading;
 using Stardust.Data;
 using Stardust.Data.Nodes;
@@ -7,24 +8,11 @@ using Stardust.Data.Nodes;
 namespace Stardust.Server.Services;
 
 /// <summary>节点在线服务</summary>
-public class NodeOnlineService : IHostedService
+public class NodeOnlineService(IServiceProvider serviceProvider, StarServerSetting setting, ITracer tracer) : IHostedService
 {
     #region 属性
     private TimerX _timer;
     private NodeService _nodeService;
-    private readonly IServiceProvider _serviceProvider;
-    private readonly StarServerSetting _setting;
-    private readonly ITracer _tracer;
-    #endregion
-
-    #region 构造
-    public NodeOnlineService(IServiceProvider serviceProvider, StarServerSetting setting, ITracer tracer)
-    {
-        //_nodeService = nodeService;
-        _serviceProvider = serviceProvider;
-        _setting = setting;
-        _tracer = tracer;
-    }
     #endregion
 
     #region 方法
@@ -45,32 +33,31 @@ public class NodeOnlineService : IHostedService
     private void CheckNodeOnline(Object state)
     {
         // 节点超时
-        var set = _setting;
-        var sessionTimeout = set.SessionTimeout;
+        var sessionTimeout = setting.SessionTimeout;
         if (sessionTimeout > 0)
         {
-            using var span = _tracer?.NewSpan(nameof(CheckNodeOnline));
-            _nodeService ??= _serviceProvider.GetService<NodeService>();
+            using var span = tracer?.NewSpan(nameof(CheckNodeOnline));
+            _nodeService ??= serviceProvider.GetService<NodeService>();
 
             var rs = NodeOnline.ClearExpire(TimeSpan.FromSeconds(sessionTimeout));
             if (rs != null)
             {
-                foreach (var olt in rs)
+                foreach (var online in rs)
                 {
-                    var node = olt?.Node;
-                    var msg = $"[{node}]登录于{olt.CreateTime}，最后活跃于{olt.UpdateTime}";
-                    node.WriteHistory("超时下线", true, msg, olt.CreateIP);
-
+                    var node = online?.Node;
                     if (node != null)
                     {
+                        var msg = $"[{node}/{online?.SessionID}]登录于{online.CreateTime}，最后活跃于{online.UpdateTime}";
+                        node.WriteHistory("超时下线", true, msg, online.CreateIP);
+
                         // 计算在线时长
-                        if (olt.CreateTime.Year > 2000 && olt.UpdateTime.Year > 2000)
+                        if (online.CreateTime.Year > 2000 && online.UpdateTime.Year > 2000)
                         {
-                            node.OnlineTime += (Int32)(olt.UpdateTime - olt.CreateTime).TotalSeconds;
+                            node.OnlineTime += (Int32)(online.UpdateTime - online.CreateTime).TotalSeconds;
                             node.Update();
                         }
 
-                        _nodeService.RemoveOnline(node);
+                        _nodeService.RemoveOnline(new DeviceContext { Device = node, Online = online });
 
                         CheckOffline(node, "超时下线");
                     }

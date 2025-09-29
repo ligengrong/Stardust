@@ -126,8 +126,8 @@ public static class OSKindHelper
         if (osName.StartsWithIgnoreCase("PuhuaOS")) return OSKinds.PuhuaOS;
         if (osName.StartsWithIgnoreCase("FangdeOS")) return OSKinds.FangdeOS;
         if (osName.StartsWithIgnoreCase("NewStartOS")) return OSKinds.NewStartOS;
-
-        if (osName.StartsWithIgnoreCase("LoongOS")) return OSKinds.LoongOS;
+        if (osName.StartsWithIgnoreCase("TencentOS")) return OSKinds.TencentOS;
+        if (osName.StartsWithIgnoreCase("OpenCloudOS")) return OSKinds.OpenCloudOS;
 
         if (osName.Contains("OpenWrt")) return OSKinds.OpenWrt;
         if (osName.Contains("Buildroot")) return OSKinds.Buildroot;
@@ -205,7 +205,7 @@ public static class OSKindHelper
             rid
         };
 
-        var rid2 = (RuntimeIdentifier)((Int32)rid / 10);
+        var rid2 = (RuntimeIdentifier)((Int32)rid / 10 * 10);
         if (rid2 != rid) ids.Add(rid2);
 
         return ids.ToArray();

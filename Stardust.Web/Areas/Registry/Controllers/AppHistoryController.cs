@@ -68,6 +68,14 @@ public class AppHistoryController : ReadOnlyEntityController<AppHistory>
         return fields;
     }
 
+    protected override IEnumerable<AppHistory> SearchData(Pager p)
+    {
+        var appId = p["appId"].ToInt(-1);
+        if (appId >= 0) PageSetting.OrderByKey = true;
+
+        return base.SearchData(p);
+    }
+
     protected override IEnumerable<AppHistory> Search(Pager p)
     {
         //PageSetting.EnableAdd = false;

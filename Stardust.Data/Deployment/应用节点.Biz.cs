@@ -164,6 +164,33 @@ public partial class AppDeployNode : Entity<AppDeployNode>
     #endregion
 
     #region 业务操作
+    /// <summary>修正旧版用户名数据</summary>
+    /// <returns></returns>
+    public Int32 FixOldUserName()
+    {
+        // 兼容旧数据
+        var user = UserName;
+        if (user.IsNullOrEmpty()) return 0;
+
+        // Windows 用户名
+        if (user != "$" && user != "$$" && user[^1] == '$')
+        {
+            ProcessUser = user;
+            UserName = null;
+            return Update();
+        }
+
+        if (user == Deploy?.UserName)
+        {
+            // 如果和应用的用户名相同，则不设置用户名
+            ProcessUser = user;
+            UserName = null;
+            return Update();
+        }
+
+        return 0;
+    }
+
     /// <summary>
     /// 转应用服务信息
     /// </summary>
@@ -180,20 +207,25 @@ public partial class AppDeployNode : Entity<AppDeployNode>
             Arguments = Arguments,
             Environments = Environments,
             WorkingDirectory = WorkingDirectory,
+            UserName = UserName,
 
             Enable = app.Enable && Enable,
             //AutoStart = app.AutoStart,
             AutoStop = app.AutoStop,
             ReloadOnChange = app.ReloadOnChange,
-            MaxMemory = app.MaxMemory,
+            MaxMemory = MaxMemory,
+            Priority = Priority,
             Mode = Mode,
         };
+
         if (inf.Name.IsNullOrEmpty()) inf.Name = app.Name;
         if (inf.FileName.IsNullOrEmpty()) inf.FileName = app.FileName;
         if (inf.Arguments.IsNullOrEmpty()) inf.Arguments = app.Arguments;
         if (inf.Environments.IsNullOrEmpty()) inf.Environments = app.Environments;
         if (inf.WorkingDirectory.IsNullOrEmpty()) inf.WorkingDirectory = app.WorkingDirectory;
         if (inf.UserName.IsNullOrEmpty()) inf.UserName = app.UserName;
+        if (inf.MaxMemory <= 0) inf.MaxMemory = app.MaxMemory;
+        if (inf.Priority == 0) inf.Priority = app.Priority;
         if (inf.Mode <= ServiceModes.Default) inf.Mode = app.Mode;
 
         return inf;
@@ -203,8 +235,8 @@ public partial class AppDeployNode : Entity<AppDeployNode>
     {
         ProcessId = inf.Id;
         ProcessName = inf.Name;
+        ProcessUser = inf.UserName;
         Version = inf.Version;
-        UserName = inf.UserName;
         StartTime = inf.StartTime;
         Listens = inf.Listens;
     }
@@ -214,7 +246,7 @@ public partial class AppDeployNode : Entity<AppDeployNode>
         IP = online.IP;
         ProcessId = online.ProcessId;
         ProcessName = online.ProcessName;
-        UserName = online.UserName;
+        ProcessUser = online.UserName;
         StartTime = online.StartTime;
         Listens = online.Listens;
         Version = online.Version;

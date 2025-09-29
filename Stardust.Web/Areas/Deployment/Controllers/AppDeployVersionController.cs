@@ -209,6 +209,16 @@ public class AppDeployVersionController : EntityController<AppDeployVersion>
         var att = await base.SaveFile(entity, file, uploadPath, fileName);
         if (att != null)
         {
+            var deploy = entity.Deploy;
+
+            _deployService.ReadDotNet(entity, att, uploadPath);
+
+            // 处理Nginx
+            if (deploy.Port == 0 || deploy.Urls.IsNullOrEmpty())
+                _deployService.ReadNginx(entity, att, uploadPath);
+            if (deploy.Port > 0 && !deploy.Urls.IsNullOrEmpty())
+                _deployService.BuildNginx(entity, att, uploadPath);
+
             entity.Hash = att.Hash;
             entity.Size = att.Size;
             entity.Url = $"/cube/file?id={att.Id}{att.Extension}";
@@ -216,11 +226,10 @@ public class AppDeployVersionController : EntityController<AppDeployVersion>
             entity.Update();
 
             // 上传完成即发布。即使新增，也是插入后保存文件，然后再来OnUpdate
-            var app = entity.Deploy;
-            if (entity.Enable && !entity.Url.IsNullOrEmpty() && app != null && app.Enable && app.AutoPublish)
+            if (entity.Enable && !entity.Url.IsNullOrEmpty() && deploy != null && deploy.Enable && deploy.AutoPublish)
             {
-                app.Version = entity.Version;
-                app.Update();
+                deploy.Version = entity.Version;
+                deploy.Update();
 
                 _ = Publish(entity.Deploy);
             }

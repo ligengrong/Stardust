@@ -1,4 +1,5 @@
 ﻿using NewLife;
+using NewLife.Remoting.Models;
 using Stardust.Data;
 using Stardust.Data.Deployment;
 using Stardust.Data.Nodes;
@@ -26,10 +27,79 @@ public class DeployService
             // 目标节点所支持的运行时标识符。一般有两个，如 win-x64/win
             var rids = OSKindHelper.GetRID(node.OSKind, node.Architecture?.ToLower() + "");
 
-            return vers.FirstOrDefault(e => rids.Contains(e.Runtime));
+            //return vers.FirstOrDefault(e => rids.Contains(e.Runtime));
+
+            // 可能有多个版本，挑选最新的适合目标节点操作系统、指令集和框架运行时的版本
+            var fms = node.Frameworks?.Split(',', StringSplitOptions.RemoveEmptyEntries) ?? [];
+            foreach (var ver in vers)
+            {
+                if (!rids.Contains(ver.Runtime)) continue;
+                if (!ver.TargetFramework.IsNullOrEmpty() && fms.Length > 0)
+                {
+                    var tfm = ver.TargetFramework.TrimStart("netcoreapp", "net", "v");
+
+                    // 特殊处理4.x，例如net4.6.1可以运行在net4.7/net4.8上
+                    if (tfm.StartsWith("4."))
+                    {
+                        var v = new Version(tfm);
+                        if (!fms.Any(e => e.StartsWith("4.") && new Version(e) >= v))
+                            continue;
+                    }
+                    else if (!fms.Any(e => e.StartsWith(tfm)))
+                        continue;
+                }
+
+                return ver;
+            }
+
+            return null;
         }
 
         return AppDeployVersion.FindByDeployIdAndVersion(app.Id, app.Version);
+    }
+
+    public DeployInfo BuildDeployInfo(AppDeployNode item, Node node)
+    {
+        // 消除缓存，解决版本更新后不能及时更新缓存的问题
+        var app = item.Deploy;
+        app = AppDeploy.FindByKey(app.Id);
+        if (app == null || !app.Enable) return null;
+
+        //todo: 需要根据当前节点的处理器指令集和操作系统版本来选择合适的版本
+        //var ver = AppDeployVersion.FindByDeployIdAndVersion(app.Id, app.Version);
+        var ver = GetDeployVersion(app, node);
+        if (ver == null) return null;
+
+        var inf = new DeployInfo
+        {
+            Id = item.Id,
+            Name = app.AppName ?? app.Name,
+            Version = app.Version,
+            Url = ver?.Url,
+            Hash = ver?.Hash,
+            Overwrite = ver?.Overwrite,
+            Mode = ver.Mode,
+
+            Service = item.ToService(app),
+        };
+
+        // 修正Url
+        if (inf.Url.StartsWithIgnoreCase("/cube/file/")) inf.Url = inf.Url.Replace("/cube/file/", "/cube/file?id=");
+
+        // 如果是dotnet应用，可能需要额外的参数
+        if (app.ProjectKind == ProjectKinds.DotNet)
+        {
+            var port = item.Port;
+            if (port <= 0) port = app.Port;
+            if (port > 0)
+            {
+                var args = inf.Service.Arguments;
+                if (args.IsNullOrEmpty() || !args.Contains("urls=", StringComparison.OrdinalIgnoreCase))
+                    inf.Service.Arguments = (args + " urls=http://*:" + port).Trim();
+            }
+        }
+
+        return inf;
     }
 
     /// <summary>更新应用部署的节点信息</summary>
@@ -126,14 +196,20 @@ public class DeployService
         }
         {
             var clientId = $"{inf.IP?.Split(',').FirstOrDefault()}@{inf.Id}";
-            _registryService.Ping(ap, inf, ip, clientId, null);
+            var context = new DeviceContext
+            {
+                Device = ap,
+                UserHost = ip,
+                ClientId = clientId,
+            };
+            _registryService.OnPing(context, inf);
             AppMeter.WriteData(ap, inf, "Deploy", clientId, ip);
         }
 
         // 部署集
         var app = AppDeploy.FindByName(name);
         app ??= new AppDeploy { Name = name };
-        app.AppId = ap.Id;
+        if (app.AppId <= 0) app.AppId = ap.Id;
         if (!ap.Category.IsNullOrEmpty()) app.Category = ap.Category;
         app.Save();
 

@@ -187,6 +187,7 @@ public class AppClient : ClientBase, IRegistry
         await PingLocal().ConfigureAwait(false);
 
         if (!NetworkInterface.GetIsNetworkAvailable()) return;
+        if (!Logined) return;
 
         await RefreshPublish().ConfigureAwait(false);
         await RefreshConsume().ConfigureAwait(false);
@@ -213,6 +214,9 @@ public class AppClient : ClientBase, IRegistry
     public Task<ServiceModel?> UnregisterAsync(PublishServiceInfo service)
     {
         _publishServices.TryRemove(service.ServiceName, out _);
+
+        // 检查登录状态
+        if (!Logined) return Task.FromResult<ServiceModel?>(null);
 
         return InvokeAsync<ServiceModel>("App/UnregisterService", service);
     }

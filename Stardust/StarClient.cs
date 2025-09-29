@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.Net;
 using System.Net.NetworkInformation;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -10,12 +11,14 @@ using NewLife.Data;
 using NewLife.Log;
 using NewLife.Model;
 using NewLife.Reflection;
+using NewLife.Remoting;
 using NewLife.Remoting.Clients;
 using NewLife.Remoting.Models;
 using NewLife.Security;
 
 using Stardust.Managers;
 using Stardust.Models;
+using Stardust.Monitors;
 
 namespace Stardust;
 
@@ -33,7 +36,6 @@ public class StarClient : ClientBase, ICommandClient, IEventProvider
     public String[]? Plugins { get; set; }
 
     private FrameworkManager _frameworkManager = new();
-    private readonly ICache _cache = new MemoryCache();
     #endregion
 
     #region 构造
@@ -291,6 +293,17 @@ public class StarClient : ClientBase, ICommandClient, IEventProvider
         var request = new PingInfo();
         FillPingRequest(request);
 
+        // 获取网络质量
+        var monitor = new PingMonitor();
+        var gw = AgentInfo.GetGateway();
+        if (gw != null && gw.Contains('/')) gw = gw.Substring(0, gw.IndexOf("/"));
+        var gwtTask = Task.Run(() => monitor.GetScoreAsync(gw));
+        var dns = AgentInfo.GetDns();
+        if (dns.IsNullOrEmpty() || IPAddress.TryParse(dns, out var ip) && ip.IsLocal()) dns = "223.5.5.5";
+        var dnsTask = Task.Run(() => monitor.GetScoreAsync(dns));
+        var svr = (Client as ApiHttpClient)?.Current?.Address.Host;
+        var svrTask = Task.Run(() => monitor.GetScoreAsync(svr));
+
         var exs = _excludes.Where(e => e.Contains('*')).ToArray();
 
         var ps = Process.GetProcesses();
@@ -338,11 +351,16 @@ public class StarClient : ClientBase, ICommandClient, IEventProvider
         }
         catch { }
 
+        // 获取网络质量
+        request.IntranetScore = gwtTask?.Result ?? 0;
+        request.InternetScore = (dnsTask?.Result ?? 0) * 0.3 + (svrTask?.Result ?? 0) * 0.7;
+
         if (mi is IExtend ext)
         {
             // 读取无线信号强度
             if (ext.Items.TryGetValue("Signal", out var value)) request.Signal = value.ToInt();
         }
+
         return request;
     }
 
@@ -354,7 +372,7 @@ public class StarClient : ClientBase, ICommandClient, IEventProvider
         if (rs != null)
         {
             // 迁移到新服务器
-            if (rs is PingResponse prs && !prs.NewServer.IsNullOrEmpty() && prs.NewServer != Server)
+            if (rs is IPingResponse2 prs && !prs.NewServer.IsNullOrEmpty() && prs.NewServer != Server)
             {
                 var arg = new MigrationEventArgs { NewServer = prs.NewServer };
 

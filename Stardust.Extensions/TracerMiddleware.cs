@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
@@ -220,32 +221,119 @@ public class TracerMiddleware
         return p;
     }
 
+    private static DateTime _nextSave;
+    private static ConcurrentDictionary<String, Int32> _serviceAddresses = new(StringComparer.OrdinalIgnoreCase);
+
+    // 记录最近一次我们采纳的配置快照（本进程写入或外部修改后加载）
+    private static String? _lastWrittenServiceAddress;
+
+    // 归一化构造基地址：scheme://host[:port]，兼容IPv6加[]，端口仅在非默认时保留
+    private static Boolean TryBuildBaseAddress(HttpContext ctx, out String? baseAddress)
+    {
+        baseAddress = null;
+
+        var uri = ctx.Request.GetRawUrl();
+        if (uri == null) return false;
+
+        var host = uri.Authority;
+        if (host.IsNullOrEmpty()) return false;
+
+        var p = host.LastIndexOf(':');
+        if (p >= 0) host = host[..p];
+
+        var addr = $"{uri.Scheme}://{host}";
+        if (uri.Port > 0)
+        {
+            if (uri.Scheme == "http" && uri.Port != 80)
+                addr += ":" + uri.Port;
+            else if (uri.Scheme == "https" && uri.Port != 443)
+                addr += ":" + uri.Port;
+        }
+
+        baseAddress = addr;
+        return true;
+    }
+
+    // 归一化配置中的地址为 scheme://host[:port]（IPv6自动加[]）
+    private static String? NormalizeBaseAddress(String addr)
+    {
+        if (!Uri.TryCreate(addr, UriKind.Absolute, out var u)) return null;
+
+        var host = u.Host;
+        if (host.Contains(':') && !host.StartsWith("[")) host = $"[{host}]"; // IPv6
+
+        var baseAddress = $"{u.Scheme}://{host}";
+        var port = u.Port;
+        if (port > 0)
+        {
+            if (u.Scheme == "http" && port != 80)
+                baseAddress += ":" + port;
+            else if (u.Scheme == "https" && port != 443)
+                baseAddress += ":" + port;
+        }
+
+        return baseAddress;
+    }
+
+    // 外部修改时：清空内存计数，并按配置顺序赋 N*10 降序权重
+    private static void ReloadCountsFromConfig(NewLife.Setting set)
+    {
+        _serviceAddresses.Clear();
+
+        var csv = set.ServiceAddress;
+        var list = new List<String>();
+        if (!csv.IsNullOrEmpty())
+        {
+            var seen = new HashSet<String>(StringComparer.OrdinalIgnoreCase);
+            var parts = csv!.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var item in parts)
+            {
+                var norm = NormalizeBaseAddress(item.Trim());
+                if (!norm.IsNullOrEmpty() && seen.Add(norm)) list.Add(norm);
+            }
+        }
+
+        var n = list.Count;
+        for (var i = 0; i < n; i++)
+        {
+            _serviceAddresses[list[i]] = (n - i) * 10;
+        }
+
+        _lastWrittenServiceAddress = set.ServiceAddress?.Trim();
+    }
+
     /// <summary>自动记录用户访问主机地址</summary>
     /// <param name="ctx"></param>
     public static void SaveServiceAddress(HttpContext ctx)
     {
-        var uri = ctx.Request.GetRawUrl();
-        if (uri == null) return;
-
-        // 排除本机地址
-        var host = uri.Authority;
-        var p = host.LastIndexOf(':');
-        if (p >= 0) host = host[..p];
-        if (host.EqualIgnoreCase("127.0.0.1", "localhost", "[::1]")) return;
-        if (host.StartsWith("127.0.")) return;
-
-        var baseAddress = $"{uri.Scheme}://{uri.Authority}";
-
+        // 先检测外部修改：首次或变更即重载并赋权
         var set = NewLife.Setting.Current;
-        var ss = set.ServiceAddress?.Split(",").ToList() ?? [];
-        if (!ss.Contains(baseAddress))
-        {
-            // 过滤掉本机地址
-            ss = ss.Where(e => !e.EqualIgnoreCase("127.0.0.1", "localhost", "[::1]") && !e.StartsWith("127.0.")).ToList();
+        var currentCfg = set.ServiceAddress?.Trim();
+        if (_lastWrittenServiceAddress == null || currentCfg != _lastWrittenServiceAddress)
+            ReloadCountsFromConfig(set);
 
-            ss.Insert(0, baseAddress);
-            set.ServiceAddress = ss.Take(5).Join(",");
+        if (!TryBuildBaseAddress(ctx, out var baseAddress) || baseAddress == null) return;
+
+        // 仅统计“本进程期间”的访问次数
+        var count = _serviceAddresses.AddOrUpdate(baseAddress, 1, (k, v) => v + 1);
+
+        // 节流：每地址每100次尝试一次，或每10分钟一次
+        if (count % 100 != 1 && _nextSave >= DateTime.Now) return;
+
+        _nextSave = DateTime.Now.AddMinutes(10);
+
+        // 根据“本进程统计+（可能存在的）配置权重种子”选择 Top5
+        var value = _serviceAddresses
+            .OrderByDescending(e => e.Value)
+            .Take(5)
+            .Join(",", e => e.Key);
+
+        if (!String.Equals(set.ServiceAddress, value, StringComparison.Ordinal))
+        {
+            DefaultSpan.Current?.AppendTag($"ServiceAddress: {value}");
+            set.ServiceAddress = value;
             set.Save();
+            _lastWrittenServiceAddress = value;
         }
     }
 }

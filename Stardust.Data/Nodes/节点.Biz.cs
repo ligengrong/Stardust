@@ -1,13 +1,15 @@
-﻿using NewLife;
-using NewLife.Data;
-using Stardust.Data.Platform;
-using Stardust.Models;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using System.Web.Script.Serialization;
 using System.Xml.Serialization;
+using NewLife;
+using NewLife.Data;
+using NewLife.Log;
+using NewLife.Remoting.Models;
+using Stardust.Data.Platform;
+using Stardust.Models;
 using XCode;
 using XCode.Cache;
 using XCode.Configuration;
@@ -16,7 +18,7 @@ using XCode.Membership;
 namespace Stardust.Data.Nodes;
 
 /// <summary>节点信息</summary>
-public partial class Node : Entity<Node>
+public partial class Node : Entity<Node>, IDeviceModel2, ILogProvider
 {
     #region 对象操作
     static Node()
@@ -326,7 +328,7 @@ public partial class Node : Entity<Node>
     /// <returns></returns>
     public static IList<Node> SearchByIP(String ip)
     {
-        if (ip.IsNullOrEmpty()) return new List<Node>();
+        if (ip.IsNullOrEmpty()) return [];
 
         var ips = ip.Split(',', StringSplitOptions.RemoveEmptyEntries);
 
@@ -377,7 +379,7 @@ public partial class Node : Entity<Node>
     {
         var exp = new WhereExpression();
 
-        if (global != null)
+        if (projectId > 0 && global != null)
         {
             // 找到全局项目，然后再找到所有节点。如果项目不存在，则也不会有节点
             var prjs = GalaxyProject.FindAllWithCache().Where(e => e.IsGlobal == global.Value).Select(e => e.Id).ToList();
@@ -386,7 +388,7 @@ public partial class Node : Entity<Node>
 
             exp &= _.ProjectId.In(prjs);
         }
-        else if (projectId >= 0)
+        else if (projectId > 0)
             exp &= _.ProjectId == projectId;
 
         if (!category.IsNullOrEmpty()) exp &= _.Category == category | _.Category.IsNullOrEmpty();
@@ -705,6 +707,53 @@ public partial class Node : Entity<Node>
         hi.Insert();
 
         return hi;
+    }
+
+    /// <summary>创建设备历史</summary>
+    /// <param name="action"></param>
+    /// <param name="success"></param>
+    /// <param name="content"></param>
+    /// <returns></returns>
+    public IExtend CreateHistory(String action, Boolean success, String content) => NodeHistory.Create(this, action, success, content, null, null);
+
+    /// <summary>写历史日志</summary>
+    /// <param name="action"></param>
+    /// <param name="success"></param>
+    /// <param name="content"></param>
+    public void WriteLog(String action, Boolean success, String content)
+    {
+        var history = NodeHistory.Create(this, action, success, content, null, null);
+        history.SaveAsync();
+    }
+
+    /// <summary>创建在线对象</summary>
+    /// <param name="sessionId"></param>
+    /// <returns></returns>
+    public IOnlineModel CreateOnline(String sessionId)
+    {
+        var node = this;
+        var online = NodeOnline.GetOrAdd(sessionId);
+        online.ProjectId = node.ProjectId;
+        online.NodeID = node.ID;
+        online.Name = node.Name;
+        online.ProductCode = node.ProductCode;
+        online.IP = node.IP;
+        online.Category = node.Category;
+        online.ProvinceID = node.ProvinceID;
+        online.CityID = node.CityID;
+        online.Address = node.Address;
+        online.Location = node.Location;
+        online.OSKind = node.OSKind;
+        online.Version = node.Version;
+        online.CompileTime = node.CompileTime;
+        online.Memory = node.Memory;
+        online.MACs = node.MACs;
+        //online.Token = context.Token;
+        //online.CreateIP = context.UserHost;
+        //online.UpdateIP = context.UserHost;
+        online.Creator = Environment.MachineName;
+
+        return online;
     }
     #endregion
 }

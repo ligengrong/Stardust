@@ -20,8 +20,14 @@ public class ServiceManager : DisposeBase
     /// <summary>应用服务集合</summary>
     public ServiceInfo[]? Services { get; private set; }
 
+    /// <summary>正在运行的应用服务信息</summary>
+    public ProcessInfo[] RunningServices => _controllers.Select(e => e.ToModel()).ToArray();
+
     /// <summary>延迟时间。重启进程或服务的延迟时间，默认3000ms</summary>
     public Int32 Delay { get; set; } = 3000;
+
+    /// <summary>启动挂钩。拉起目标进程时，对dotNet应用注入星尘监控钩子，默认false</summary>
+    public Boolean StartupHook { get; set; }
 
     ///// <summary>星尘服务地址</summary>
     //public String Server { get; set; }
@@ -148,6 +154,7 @@ public class ServiceManager : DisposeBase
         {
             _controllers.Add(new ServiceController
             {
+                Manager = this,
                 Name = item.Name,
                 ProcessId = item.ProcessId,
                 ProcessName = item.ProcessName,
@@ -232,6 +239,40 @@ public class ServiceManager : DisposeBase
         SaveDb();
     }
 
+    /// <summary>启动指定服务</summary>
+    /// <param name="serviceName">服务名称</param>
+    /// <returns>是否成功启动</returns>
+    public Boolean Start(String serviceName)
+    {
+        if (serviceName.IsNullOrEmpty()) return false;
+
+        var service = Services?.FirstOrDefault(e => e.Name.EqualIgnoreCase(serviceName));
+        if (service == null) return false;
+
+        service.Enable = true;
+        var result = StartService(service, null);
+        RaiseServiceChanged();
+        return result;
+    }
+
+    /// <summary>停止指定服务</summary>
+    /// <param name="serviceName">服务名称</param>
+    /// <param name="reason">停止原因</param>
+    /// <returns>是否成功停止</returns>
+    public Boolean Stop(String serviceName, String reason)
+    {
+        if (serviceName.IsNullOrEmpty()) return false;
+
+        var service = Services?.FirstOrDefault(e => e.Name.EqualIgnoreCase(serviceName));
+        if (service == null) return false;
+
+        // 禁用服务，防止自动重启
+        service.Enable = false;
+        var result = StopService(serviceName, reason);
+        RaiseServiceChanged();
+        return result;
+    }
+
     /// <summary>保存应用状态到数据库</summary>
     private void SaveDb()
     {
@@ -282,6 +323,7 @@ public class ServiceManager : DisposeBase
 
             controller = new ServiceController
             {
+                Manager = this,
                 Name = service.Name,
                 AppId = deploy?.Name,
                 //Info = service,

@@ -9,17 +9,15 @@ using NewLife;
 using NewLife.Data;
 using NewLife.Log;
 using NewLife.Reflection;
-
 using Stardust.Data.Nodes;
 using Stardust.Models;
 
 using XCode;
-using XCode.Membership;
 
 namespace Stardust.Data;
 
 /// <summary>应用在线。一个应用有多个部署，每个在线会话对应一个服务地址</summary>
-public partial class AppOnline : Entity<AppOnline>
+public partial class AppOnline : Entity<AppOnline>, IOnlineModel2
 {
     #region 对象操作
     static AppOnline()
@@ -41,7 +39,7 @@ public partial class AppOnline : Entity<AppOnline>
     /// <param name="isNew">是否插入</param>
     public override void Valid(Boolean isNew)
     {
-        if (!Version.IsNullOrEmpty() && !Dirtys[nameof(Compile)])
+        if (Compile.Year < 2000 && !Version.IsNullOrEmpty())
         {
             var dt = AssemblyX.GetCompileTime(Version);
             var y = DateTime.Now.Year;
@@ -66,17 +64,19 @@ public partial class AppOnline : Entity<AppOnline>
 
         if (TraceId.IsNullOrEmpty()) TraceId = DefaultSpan.Current?.TraceId;
 
-        var len = _.IP.Length;
-        if (len > 0 && !IP.IsNullOrEmpty() && IP.Length > len) IP = IP[..len];
+        this.TrimExtraLong(_.IP, _.ProcessName, _.CommandLine, _.Listens);
 
-        len = _.ProcessName.Length;
-        if (len > 0 && !ProcessName.IsNullOrEmpty() && ProcessName.Length > len) ProcessName = ProcessName[..len];
+        //var len = _.IP.Length;
+        //if (len > 0 && !IP.IsNullOrEmpty() && IP.Length > len) IP = IP[..len];
 
-        len = _.CommandLine.Length;
-        if (len > 0 && !CommandLine.IsNullOrEmpty() && CommandLine.Length > len) CommandLine = CommandLine[..len];
+        //len = _.ProcessName.Length;
+        //if (len > 0 && !ProcessName.IsNullOrEmpty() && ProcessName.Length > len) ProcessName = ProcessName[..len];
 
-        len = _.Listens.Length;
-        if (len > 0 && !Listens.IsNullOrEmpty() && Listens.Length > len) Listens = Listens[..len];
+        //len = _.CommandLine.Length;
+        //if (len > 0 && !CommandLine.IsNullOrEmpty() && CommandLine.Length > len) CommandLine = CommandLine[..len];
+
+        //len = _.Listens.Length;
+        //if (len > 0 && !Listens.IsNullOrEmpty() && Listens.Length > len) Listens = Listens[..len];
 
         base.Valid(isNew);
     }
@@ -98,6 +98,8 @@ public partial class AppOnline : Entity<AppOnline>
     /// <summary>节点</summary>
     [Map(__.NodeId)]
     public String NodeName => Node?.Name;
+
+    String IOnlineModel.SessionId { get => Client; set => Client = value; }
     #endregion
 
     #region 扩展查询
@@ -117,18 +119,18 @@ public partial class AppOnline : Entity<AppOnline>
         //return Find(_.ID == id);
     }
 
-    ///// <summary>根据会话查找</summary>
-    ///// <param name="client">会话</param>
-    ///// <param name="cache">是否走缓存</param>
-    ///// <returns></returns>
-    //public static AppOnline FindByClient(String client, Boolean cache = true)
-    //{
-    //    if (client.IsNullOrEmpty()) return null;
+    /// <summary>根据会话查找</summary>
+    /// <param name="client">会话</param>
+    /// <param name="cache">是否走缓存</param>
+    /// <returns></returns>
+    public static AppOnline FindBySessionId(String client, Boolean cache = true)
+    {
+        if (client.IsNullOrEmpty()) return null;
 
-    //    if (!cache) return Find(_.Client == client);
+        if (!cache) return Find(_.Client == client);
 
-    //    return Meta.SingleCache.GetItemWithSlaveKey(client) as AppOnline;
-    //}
+        return Meta.SingleCache.GetItemWithSlaveKey(client) as AppOnline;
+    }
 
     /// <summary>根据令牌查找</summary>
     /// <param name="token">令牌</param>
@@ -247,7 +249,7 @@ public partial class AppOnline : Entity<AppOnline>
     {
         if (client.IsNullOrEmpty()) return null;
 
-        return GetOrAdd(client, FindByClient, k => new AppOnline { Client = k, Creator = Environment.MachineName });
+        return GetOrAdd(client, FindBySessionId, k => new AppOnline { Client = k, Creator = Environment.MachineName });
     }
 
     /// <summary>
@@ -300,6 +302,29 @@ public partial class AppOnline : Entity<AppOnline>
             Listens = info.Listens;
             StartTime = info.StartTime;
         }
+    }
+
+    public Int32 Save(IPingRequest request, Object context)
+    {
+        if (context is DeviceContext ctx)
+        {
+            Token = ctx.Token;
+            UpdateIP = ctx.UserHost;
+
+            if (ctx.Device is App app)
+            {
+                Name = app.Name;
+                Category = app.Category;
+                Version = app.Version;
+
+                if (request is AppInfo ping) Fill(app, ping);
+            }
+        }
+
+        PingCount++;
+
+        return SaveAsync() ? 1 : 0;
+        //return Update();
     }
 
     /// <summary>删除过期，指定过期时间</summary>

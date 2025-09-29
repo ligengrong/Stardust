@@ -1,8 +1,8 @@
 ﻿using NewLife;
 using NewLife.Caching;
 using NewLife.Log;
-using NewLife.Net;
 using NewLife.Remoting;
+using NewLife.Remoting.Extensions.Services;
 using NewLife.Remoting.Models;
 using NewLife.Security;
 using NewLife.Serialization;
@@ -12,72 +12,77 @@ using Stardust.Data.Nodes;
 using Stardust.Data.Platform;
 using Stardust.Models;
 using XCode;
+using Service = Stardust.Data.Service;
 
 namespace Stardust.Server.Services;
 
-public class RegistryService
+public class RegistryService(AppQueueService queue, AppOnlineService appOnline, IPasswordProvider passwordProvider, AppSessionManager sessionManager, ICacheProvider cacheProvider, StarServerSetting setting, ITracer tracer, IServiceProvider serviceProvider) : DefaultDeviceService<Node, NodeOnline>(sessionManager, passwordProvider, cacheProvider, serviceProvider)
 {
-    private readonly AppQueueService _queue;
-    private readonly AppOnlineService _appOnline;
-    private readonly IPasswordProvider _passwordProvider;
-    private readonly AppSessionManager _sessionManager;
-    private readonly ITracer _tracer;
-
-    public RegistryService(AppQueueService queue, AppOnlineService appOnline, IPasswordProvider passwordProvider, AppSessionManager sessionManager, ICacheProvider cacheProvider, ITracer tracer)
+    #region 登录注销
+    public override ILoginResponse Login(DeviceContext context, ILoginRequest request, String source)
     {
-        _queue = queue;
-        _appOnline = appOnline;
-        _passwordProvider = passwordProvider;
-        _sessionManager = sessionManager;
-        _tracer = tracer;
+        var rs = base.Login(context, request, source);
+
+        var inf = request as AppModel;
+        if (context.Online is AppOnline online)
+        {
+            // 关联节点，根据NodeCode匹配，如果未匹配上，则在未曾关联节点时才使用IP匹配
+            var node = Node.FindByCode(inf.NodeCode);
+            if (node == null && online.NodeId == 0) node = Node.SearchByIP(inf.IP).FirstOrDefault();
+            if (node != null) online.NodeId = node.ID;
+
+            if (!inf.Version.IsNullOrEmpty()) online.Version = inf.Version;
+            var compile = inf.Compile.ToDateTime().ToLocalTime();
+            if (compile.Year > 2000) online.Compile = compile;
+        }
+
+        return rs;
     }
 
-    /// <summary>应用鉴权</summary>
-    /// <param name="app"></param>
-    /// <param name="secret"></param>
-    /// <param name="ip"></param>
-    /// <param name="clientId"></param>
-    /// <returns></returns>
-    /// <exception cref="ApiException"></exception>
-    public Boolean Auth(App app, String secret, String ip, String clientId, StarServerSetting setting)
+    /// <summary>验证设备合法性</summary>
+    public override Boolean Authorize(DeviceContext context, ILoginRequest request)
     {
-        if (app == null) return false;
+        if (context.Device is not App app) return false;
+
+        var ip = context.UserHost;
+        var secret = request.Secret;
 
         // 检查黑白名单
         if (!app.MatchIp(ip))
-            throw new ApiException(403, $"应用[{app.Name}]禁止{ip}访问！");
+            throw new ApiException(ApiCode.Forbidden, $"应用[{app.Name}]禁止{ip}访问！");
         if (app.Project != null && !app.Project.MatchIp(ip))
-            throw new ApiException(403, $"项目[{app.Project}]禁止{ip}访问！");
+            throw new ApiException(ApiCode.Forbidden, $"项目[{app.Project}]禁止{ip}访问！");
 
         // 检查应用有效性
-        if (!app.Enable) throw new ApiException(403, $"应用[{app.Name}]已禁用！");
+        if (!app.Enable) throw new ApiException(ApiCode.Forbidden, $"应用[{app.Name}]已禁用！");
 
         // 未设置密钥，直接通过
         if (app.Secret.IsNullOrEmpty()) return true;
         if (app.Secret == secret) return true;
 
-        if (setting.SaltTime > 0 && _passwordProvider is SaltPasswordProvider saltProvider)
+        if (setting.SaltTime > 0 && passwordProvider is SaltPasswordProvider saltProvider)
         {
             // 使用盐值偏差时间，允许客户端时间与服务端时间有一定偏差
             saltProvider.SaltTime = setting.SaltTime;
         }
-        if (secret.IsNullOrEmpty() || !_passwordProvider.Verify(app.Secret, secret))
+        if (secret.IsNullOrEmpty() || !passwordProvider.Verify(app.Secret, secret))
         {
-            app.WriteHistory("应用鉴权", false, "密钥校验失败", null, ip, clientId);
+            app.WriteHistory("应用鉴权", false, "密钥校验失败", null, ip, context.ClientId);
             return false;
         }
 
         return true;
     }
 
-    /// <summary>应用注册</summary>
-    /// <param name="name"></param>
-    /// <param name="secret"></param>
-    /// <param name="autoRegister"></param>
-    /// <param name="ip"></param>
+    /// <summary>自动注册</summary>
+    /// <param name="context"></param>
+    /// <param name="request"></param>
     /// <returns></returns>
-    public App Register(String name, String secret, Boolean autoRegister, String ip, String clientId)
+    /// <exception cref="ApiException"></exception>
+    public override IDeviceModel Register(DeviceContext context, ILoginRequest request)
     {
+        var name = request.Code;
+
         // 查找应用
         var app = App.FindByName(name);
         // 查找或创建应用，避免多线程创建冲突
@@ -85,16 +90,25 @@ public class RegistryService
         {
             Name = name,
             Secret = Rand.NextString(16),
-            Enable = autoRegister,
+            Enable = setting.AppAutoRegister,
         });
 
-        app.WriteHistory("应用注册", true, $"[{app.Name}]注册成功", null, ip, clientId);
+        app.WriteHistory("应用注册", true, $"[{app.Name}]注册成功", null, context.UserHost, context.ClientId);
+        context.Device = app;
 
         return app;
     }
 
-    public App Login(App app, AppModel model, String ip, StarServerSetting setting)
+    /// <summary>登录中</summary>
+    /// <param name="context"></param>
+    /// <param name="request"></param>
+    public override void OnLogin(DeviceContext context, ILoginRequest request)
     {
+        if (context.Device is not App app) return;
+
+        var model = request as AppModel;
+        var ip = context.UserHost;
+
         // 设置默认项目
         if (app.ProjectId == 0 || app.ProjectName == "默认")
         {
@@ -113,15 +127,43 @@ public class RegistryService
             app.Version = model.Version;
         }
 
+        if (app.DisplayName.IsNullOrEmpty()) app.DisplayName = model.AppName;
         app.LastLogin = DateTime.Now;
         app.LastIP = ip;
         app.UpdateIP = ip;
         app.Update();
 
-        // 登录历史
-        app.WriteHistory("应用鉴权", true, $"[{app.DisplayName}/{app.Name}]鉴权成功 " + model.ToJson(false, false, false), model.Version, ip, model.ClientId);
+        context.Online = GetOnline(context) ?? CreateOnline(context);
 
-        return app;
+        // 登录历史
+        WriteHistory(context, "应用鉴权", true, $"[{app.DisplayName}/{app.Name}]鉴权成功 " + model.ToJson(false, false, false));
+    }
+
+    /// <summary>注销</summary>
+    /// <param name="reason">注销原因</param>
+    /// <param name="ip">IP地址</param>
+    /// <returns></returns>
+    public override IOnlineModel Logout(DeviceContext context, String reason, String source)
+    {
+        //var online = appOnline.GetOnline(context.ClientId);
+        //if (online == null) return null;
+
+        //var app = context.Device as App;
+        //var msg = $"{reason} [{app}]]登录于{online.CreateTime}，最后活跃于{online.UpdateTime}";
+        //app.WriteHistory("应用下线", true, msg, context.UserHost);
+
+        ////!! 应用注销，不删除在线记录，保留在线记录用于查询
+        ////online.Delete();
+
+        //appOnline.RemoveOnline(context.ClientId);
+
+        var online = base.Logout(context, reason, source);
+        if (online is AppOnline online2)
+        {
+            appOnline.RemoveOnline(context.ClientId);
+        }
+
+        return online;
     }
 
     /// <summary>激活应用。更新在线信息和关联节点</summary>
@@ -139,12 +181,10 @@ public class RegistryService
         app.UpdateIP = ip;
         app.Update();
 
-        app.WriteHistory(nameof(Register), true, inf.ToJson(), inf.Version, ip, clientId);
-
         if (!inf.ClientId.IsNullOrEmpty()) clientId = inf.ClientId;
 
         // 更新在线记录
-        var (online, _) = _appOnline.GetOnline(app, clientId, token, inf?.IP, ip);
+        var (online, _) = appOnline.GetOnline(app, clientId, token, inf?.IP, ip);
         if (online != null)
         {
             // 关联节点，根据NodeCode匹配，如果未匹配上，则在未曾关联节点时才使用IP匹配
@@ -153,13 +193,17 @@ public class RegistryService
             if (node != null) online.NodeId = node.ID;
 
             if (!inf.Version.IsNullOrEmpty()) online.Version = inf.Version;
+            var compile = inf.Compile.ToDateTime().ToLocalTime();
+            if (compile.Year > 2000) online.Compile = compile;
         }
         online.Update();
 
         return online;
     }
+    #endregion
 
-    public (AppService, Boolean changed) RegisterService(App app, Service service, PublishServiceInfo model, String ip)
+    #region 服务注册
+    public (AppService, Boolean changed) RegisterService(App app, Service service, PublishServiceInfo model, AppOnline online, String ip)
     {
         var clientId = model.ClientId;
         var localIp = clientId;
@@ -203,8 +247,8 @@ public class RegistryService
         }
 
         // 节点信息
-        var olt = AppOnline.FindByClient(model.ClientId);
-        if (olt != null) svc.NodeId = olt.NodeId;
+        //var online = AppOnline.FindByClient(model.ClientId);
+        if (online != null) svc.NodeId = online.NodeId;
 
         // 作用域
         if (service.UseScope)
@@ -252,9 +296,9 @@ public class RegistryService
         if (service.Address.IsNullOrEmpty())
         {
             if (!model.ExternalAddress.IsNullOrEmpty())
-                svc.Address = model.ExternalAddress;
+                svc.Address = model.ExternalAddress?.Split(',').Take(5).Join(",");
             else
-                svc.Address = urls.Take(10).Join(",");
+                svc.Address = urls.Take(5).Join(",");
         }
         else
         {
@@ -309,7 +353,7 @@ public class RegistryService
                 url = uri.ToString();
             }
 
-            var http = _tracer.CreateHttpClient();
+            var http = tracer.CreateHttpClient();
             var rs = await http.GetStringAsync(url);
 
             svc.Healthy = true;
@@ -380,41 +424,35 @@ public class RegistryService
 
         return list.ToArray();
     }
+    #endregion
 
-    private void WriteHistory(App app, String action, Boolean success, String remark, String ip, String clientId)
-    {
-        var olt = AppOnline.FindByClient(clientId);
-        var version = olt?.Version;
+    #region 心跳保活
+    //public override IOnlineModel OnPing(DeviceContext context, IPingRequest request)
+    //{
+    //    if (context.Device is not App app) return null;
 
-        var hi = AppHistory.Create(app, action, success, remark, version, Environment.MachineName, ip);
-        hi.Client = clientId;
-        hi.Insert();
-    }
+    //    // 更新在线记录
+    //    var inf = request as AppInfo;
+    //    //var (online, _) = appOnline.GetOnline(app, context.ClientId, context.Token, inf?.IP, context.UserHost);
+    //    var online = base.OnPing(context, request) as AppOnline;
+    //    if (online != null)
+    //    {
+    //        //online.Version = app.Version;
+    //        online.Fill(app, inf);
+    //        online.SaveAsync();
+    //    }
 
-    public AppOnline Ping(App app, AppInfo inf, String ip, String clientId, String token)
-    {
-        if (app == null) return null;
+    //    //// 保存性能数据
+    //    //AppMeter.WriteData(app, inf, "Ping", clientId, ip);
 
-        // 更新在线记录
-        var (online, _) = _appOnline.GetOnline(app, clientId, token, inf?.IP, ip);
-        if (online != null)
-        {
-            //online.Version = app.Version;
-            online.Fill(app, inf);
-            online.SaveAsync();
-        }
-
-        //// 保存性能数据
-        //AppMeter.WriteData(app, inf, "Ping", clientId, ip);
-
-        return online;
-    }
+    //    return online;
+    //}
 
     private static Int32 _totalCommands;
     private static IList<AppCommand> _commands;
     private static DateTime _nextTime;
 
-    public CommandModel[] AcquireAppCommands(Int32 appId)
+    public override CommandModel[] AcquireCommands(DeviceContext context)
     {
         // 缓存最近1000个未执行命令，用于快速过滤，避免大量节点在线时频繁查询命令表
         if (_nextTime < DateTime.Now || _totalCommands != AppCommand.Meta.Count)
@@ -424,10 +462,13 @@ public class RegistryService
             _nextTime = DateTime.Now.AddMinutes(1);
         }
 
+        if (context.Device is not App app) return null;
+        var appId = app.Id;
+
         // 是否有本节点
         if (!_commands.Any(e => e.AppId == appId)) return null;
 
-        using var span = _tracer?.NewSpan(nameof(AcquireAppCommands), new { appId });
+        using var span = tracer?.NewSpan(nameof(AcquireCommands), new { appId });
 
         var cmds = AppCommand.AcquireCommands(appId, 100);
         if (cmds.Count == 0) return null;
@@ -464,13 +505,28 @@ public class RegistryService
         return rs.ToArray();
     }
 
+    /// <summary>设置设备的长连接上线/下线</summary>
+    /// <param name="context">上下文</param>
+    /// <param name="online"></param>
+    /// <returns></returns>
+    public override void SetOnline(DeviceContext context, Boolean online)
+    {
+        if ((GetOnline(context) ?? context.Online) is AppOnline olt)
+        {
+            olt.WebSocket = online;
+            olt.Update();
+        }
+    }
+    #endregion
+
+    #region 下行通知
     /// <summary>向应用发送命令</summary>
     /// <param name="app">应用</param>
     /// <param name="clientId">应用实例标识。向特定应用实例发送命令时指定</param>
     /// <param name="model">命令模型</param>
     /// <param name="user">创建者</param>
     /// <returns></returns>
-    public async Task<AppCommand> SendCommand(App app, String clientId, CommandInModel model, String user)
+    public async Task<CommandReplyModel> SendCommand(App app, String clientId, CommandInModel model, String user, CancellationToken cancellationToken = default)
     {
         //if (model.Code.IsNullOrEmpty()) throw new ArgumentNullException(nameof(model.Code), "必须指定应用");
         if (model.Command.IsNullOrEmpty()) throw new ArgumentNullException(nameof(model.Command));
@@ -499,64 +555,61 @@ public class RegistryService
 
             //_queue.Publish(app.Name, item.Client, cmdModel);
             var code = $"{app.Name}@{item.Client}";
-            ts.Add(_sessionManager.PublishAsync(code, cmdModel, null, default));
+            ts.Add(sessionManager.PublishAsync(code, cmdModel, null, cancellationToken));
         }
-        Task.WaitAll(ts.ToArray());
+        await Task.WhenAll(ts);
 
         // 挂起等待。借助redis队列，等待响应
         if (model.Timeout > 0)
         {
-            var q = _queue.GetReplyQueue(cmd.Id);
-            var reply = await q.TakeOneAsync(model.Timeout);
+            var q = queue.GetReplyQueue(cmd.Id);
+            var reply = await q.TakeOneAsync(model.Timeout, cancellationToken);
             if (reply != null)
             {
                 // 埋点
-                using var span = _tracer?.NewSpan($"mq:AppCommandReply", reply);
+                using var span = tracer?.NewSpan($"mq:AppCommandReply", reply);
 
                 if (reply.Status == CommandStatus.错误)
                     throw new Exception($"命令错误！{reply.Data}");
                 else if (reply.Status == CommandStatus.取消)
                     throw new Exception($"命令已取消！{reply.Data}");
+
+                return reply;
             }
         }
 
-        return cmd;
+        return null;
     }
 
-    /// <summary>向应用发送命令</summary>
-    /// <param name="app">应用</param>
-    /// <param name="clientId">应用实例标识。向特定应用实例发送命令时指定</param>
-    /// <param name="command">命令</param>
-    /// <param name="argument">参数</param>
-    /// <param name="user"></param>
-    /// <returns></returns>
-    public async Task<AppCommand> SendCommand(App app, String clientId, String command, String argument, Int32 expire = 0, String user = null)
+    public override Task<CommandReplyModel> SendCommand(DeviceContext context, CommandInModel model, CancellationToken cancellationToken = default)
     {
-        var model = new CommandInModel
-        {
-            Command = command,
-            Argument = argument,
-            Expire = expire,
-        };
-        return await SendCommand(app, clientId, model, user);
+        if (context.Device is not App app) return null;
+
+        return SendCommand(app, null, model, null);
     }
 
-    public AppCommand CommandReply(App app, CommandReplyModel model)
+    public override Int32 CommandReply(DeviceContext context, CommandReplyModel model)
     {
+        var app = context.Device as App;
         var cmd = AppCommand.FindById((Int32)model.Id);
-        if (cmd == null) return null;
+        if (cmd == null) return 0;
 
         // 防止越权
-        if (cmd.AppId != app.Id) throw new ApiException(403, $"[{app}]越权访问[{cmd.AppName}]的服务");
+        if (cmd.AppId != app.Id) throw new ApiException(ApiCode.Forbidden, $"[{app}]越权访问[{cmd.AppName}]的服务");
 
         cmd.Status = model.Status;
         cmd.Result = model.Data;
         cmd.Update();
 
         // 推入服务响应队列，让服务调用方得到响应
-        _queue.Reply(model);
+        var topic = $"appreply:{model.Id}";
+        var q = cacheProvider.GetQueue<CommandReplyModel>(topic);
+        q.Add(model);
 
-        return cmd;
+        // 设置过期时间，过期自动清理
+        cacheProvider.Cache.SetExpire(topic, TimeSpan.FromSeconds(60));
+
+        return 1;
     }
 
     /// <summary>通知该服务的所有消费者，服务信息有变更</summary>
@@ -572,13 +625,22 @@ public class RegistryService
         var appIds = list.Select(e => e.AppId).Distinct().ToArray();
         var arguments = new { service.AppName, service.ServiceName, service.Address }.ToJson();
 
-        using var span = _tracer?.NewSpan(nameof(NotifyConsumers), $"{command} appIds={appIds.Join()} user={user} arguments={arguments}");
+        using var span = tracer?.NewSpan(nameof(NotifyConsumers), $"{command} appIds={appIds.Join()} user={user} arguments={arguments}");
 
         var ts = new List<Task>();
         foreach (var item in appIds)
         {
             var app = App.FindById(item);
-            if (app != null) ts.Add(SendCommand(app, null, command, arguments, 600, user));
+            if (app != null)
+            {
+                var model = new CommandInModel
+                {
+                    Command = command,
+                    Argument = arguments,
+                    Expire = 600,
+                };
+                ts.Add(SendCommand(app, null, model, user));
+            }
         }
 
         await Task.WhenAll(ts);
@@ -601,4 +663,76 @@ public class RegistryService
 
         return model;
     }
+    #endregion
+
+    #region 事件上报
+    //public Int32 PostEvents(DeviceContext context, EventModel[] events)
+    //{
+    //    var app = context.Device as App;
+    //    var ip = context.UserHost;
+    //    var olt = AppOnline.FindByClient(clientId);
+    //    var his = new List<AppHistory>();
+    //    foreach (var model in events)
+    //    {
+    //        //WriteHistory(model.Name, !model.Type.EqualIgnoreCase("error"), model.Time.ToDateTime().ToLocalTime(), model.Remark, null);
+    //        var success = !model.Type.EqualIgnoreCase("error");
+    //        var time = model.Time.ToDateTime().ToLocalTime();
+    //        var hi = AppHistory.Create(app, model.Name, success, model.Remark, olt?.Version, Environment.MachineName, ip);
+    //        hi.Client = clientId;
+    //        if (time.Year > 2000) hi.CreateTime = time;
+    //        his.Add(hi);
+    //    }
+
+    //    his.Insert();
+
+    //    return events.Length;
+    //}
+
+    protected override IEntity CreateEvent(DeviceContext context, IDeviceModel2 device, EventModel model)
+    {
+        var entity = base.CreateEvent(context, device, model);
+        if (entity is AppHistory history)
+        {
+            var online = GetOnline(context) as AppOnline;
+            history.Version = online?.Version;
+            history.Client = online?.Client;
+
+            var time = model.Time.ToDateTime().ToLocalTime();
+            if (time.Year > 2000) history.CreateTime = time;
+        }
+
+        return entity;
+    }
+    #endregion
+
+    #region 辅助
+    public override IDeviceModel QueryDevice(String code) => App.FindByName(code);
+
+    public override IOnlineModel QueryOnline(String sessionId) => AppOnline.FindBySessionId(sessionId, true);
+
+    protected override String GetSessionId(DeviceContext context) => context.ClientId ?? base.GetSessionId(context);
+
+    private void WriteHistory(App app, String action, Boolean success, String remark, String ip, String clientId)
+    {
+        var online = AppOnline.FindBySessionId(clientId, true);
+        var version = online?.Version;
+
+        var history = AppHistory.Create(app, action, success, remark, version, Environment.MachineName, ip);
+        history.Client = clientId;
+        history.Insert();
+    }
+
+    /// <summary>写设备历史</summary>
+    /// <param name="context">上下文</param>
+    /// <param name="action">动作</param>
+    /// <param name="success">成功</param>
+    /// <param name="remark">备注内容</param>
+    public override void WriteHistory(DeviceContext context, String action, Boolean success, String remark)
+    {
+        var version = (context.Online as AppOnline)?.Version;
+        var history = AppHistory.Create(context.Device as App, action, success, remark, version, Environment.MachineName, context.UserHost);
+        history.Client = context.ClientId;
+        history.Insert();
+    }
+    #endregion
 }

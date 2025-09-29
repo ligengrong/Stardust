@@ -1,14 +1,12 @@
 ﻿using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Unicode;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 using NewLife;
 using NewLife.Caching;
 using NewLife.Caching.Services;
 using NewLife.IP;
 using NewLife.Log;
 using NewLife.Remoting.Extensions;
-using NewLife.Security;
 using NewLife.Serialization;
 using Stardust.Data.Nodes;
 using Stardust.Extensions.Caches;
@@ -62,7 +60,7 @@ public class Startup
         // 业务服务
         services.AddSingleton<NodeService>();
         services.AddSingleton<AppQueueService>();
-        services.AddSingleton<TokenService>();
+        services.AddSingleton<AppTokenService>();
         services.AddSingleton<ConfigService>();
         services.AddSingleton<RegistryService>();
         services.AddSingleton<AppOnlineService>();

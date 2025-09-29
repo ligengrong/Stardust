@@ -6,7 +6,9 @@ using System.Web.Script.Serialization;
 using System.Xml.Serialization;
 using NewLife;
 using NewLife.Data;
+using NewLife.Log;
 using NewLife.Reflection;
+using NewLife.Remoting.Models;
 using Stardust.Monitors;
 using XCode;
 using XCode.Cache;
@@ -15,7 +17,7 @@ namespace Stardust.Data;
 
 /// <summary>应用系统。服务提供者和消费者</summary>
 //[ModelCheckMode(ModelCheckModes.CheckTableWhenFirstUse)]
-public partial class App : Entity<App>
+public partial class App : Entity<App>, IDeviceModel2, ILogProvider
 {
     #region 对象操作
     static App()
@@ -48,7 +50,7 @@ public partial class App : Entity<App>
         if (isNew && !Dirtys[__.AutoActive]) AutoActive = true;
         if (Period == 0) Period = 60;
 
-        if (!Version.IsNullOrEmpty() && !Dirtys[nameof(Compile)])
+        if (Compile.Year < 2000 && !Version.IsNullOrEmpty())
         {
             var dt = AssemblyX.GetCompileTime(Version);
             if (dt.Year > 2000) Compile = dt;
@@ -104,6 +106,10 @@ public partial class App : Entity<App>
     /// <summary>服务消费者</summary>
     [XmlIgnore, ScriptIgnore, IgnoreDataMember]
     public IList<AppConsume> Consumers => Extends.Get(nameof(Consumers), k => AppConsume.FindAllByAppId(Id));
+
+    String IDeviceModel.Code { get => Name; set => Name = value; }
+
+    String IDeviceModel2.NewServer => null;
     #endregion
 
     #region 扩展查询
@@ -277,6 +283,36 @@ public partial class App : Entity<App>
 
         // 未设置白名单，黑名单里面没有的，直接通过
         return true;
+    }
+
+    /// <summary>创建设备历史</summary>
+    /// <param name="action"></param>
+    /// <param name="success"></param>
+    /// <param name="content"></param>
+    /// <returns></returns>
+    public IExtend CreateHistory(String action, Boolean success, String content) => AppHistory.Create(this, action, success, content, null, null, null);
+
+    /// <summary>写历史日志</summary>
+    /// <param name="action"></param>
+    /// <param name="success"></param>
+    /// <param name="content"></param>
+    public void WriteLog(String action, Boolean success, String content)
+    {
+        var history = AppHistory.Create(this, action, success, content, null, null, null);
+        history.SaveAsync();
+    }
+
+    /// <summary>创建在线对象</summary>
+    /// <param name="sessionId"></param>
+    /// <returns></returns>
+    public IOnlineModel CreateOnline(String sessionId)
+    {
+        var online = AppOnline.GetOrAddClient(sessionId);
+        online.Name = Name;
+        online.Category = Category;
+        online.Version = Version;
+
+        return online;
     }
     #endregion
 }

@@ -57,7 +57,19 @@ internal class Program
 
         // 用户模式存储配置，方便服务模式读取。因为服务模式无法读取用户和分辨率等信息
         var set2 = StarAgentSetting.Current;
-        if (!"-s".EqualIgnoreCase(args)) ThreadPoolX.QueueUserWorkItem(() => LoadUser(set2));
+        if (!"-s".EqualIgnoreCase(args) && !"-restart".EqualIgnoreCase(args))
+            ThreadPoolX.QueueUserWorkItem(() => LoadUser(set2));
+
+        // 以服务工作时，提高当前进程优先级，确保星尘代理能够有效管控各个应用进程
+        if ("-s".EqualIgnoreCase(args) || "-run".EqualIgnoreCase(args))
+        {
+            try
+            {
+                var process = Process.GetCurrentProcess();
+                process.PriorityClass = ProcessPriorityClass.AboveNormal;
+            }
+            catch { }
+        }
 
         var svc = new MyService
         {
@@ -226,6 +238,7 @@ internal class MyService : ServiceBase, IServiceProvider
         var manager = new ServiceManager
         {
             Delay = set.Delay,
+            StartupHook = set.StartupHook,
 
             Tracer = _factory?.Tracer,
             Log = XTrace.Log,
@@ -345,7 +358,7 @@ internal class MyService : ServiceBase, IServiceProvider
     protected override void ProcessCommand(String cmd, String[] args)
     {
         var source = new CancellationTokenSource();
-        Task task = null;
+        Task? task = null;
 
         // 命令参数包含-restart时，如果重启后还有其它StarAgent进程，则强行杀死
         if (cmd == "-restart" || cmd == "-run" && "-delay".EqualIgnoreCase(args))
@@ -359,28 +372,35 @@ internal class MyService : ServiceBase, IServiceProvider
         // -restart已完成，通知异步任务执行下一步杀进程操作
         if (task != null)
         {
-            source.Cancel();
+            // 这里不要取消，否则task内部的Task.Delay会抛出异常
+            //source.Cancel();
 
-            // 阻塞等待异步任务完成
-            task.Wait();
+            try
+            {
+                // 阻塞等待异步任务完成
+                task.Wait(10_000);
+            }
+            catch { }
+
+            source.Cancel();
         }
     }
 
     private async Task DelayKill(CancellationToken cancellationToken)
     {
         // 命令参数包含-restart时，如果重启后还有其它StarAgent进程，则强行杀死
-        var pids = Process.GetProcessesByName("StarAgent").Select(e => e.Id).ToList();
+        var olds = Process.GetProcessesByName("StarAgent").Select(e => e.Id).ToList();
 
         await Task.Delay(5_000, cancellationToken);
 
-        var ps = Process.GetProcessesByName("StarAgent");
+        var news = Process.GetProcessesByName("StarAgent");
         var pid = Process.GetCurrentProcess().Id;
-        foreach (var p in ps)
+        foreach (var p in news)
         {
             if (p.Id == pid) continue;
 
             // 如果该进程前面没有出现过，就是新进程，无需杀死
-            if (!pids.Contains(p.Id)) continue;
+            if (!olds.Contains(p.Id)) continue;
 
             WriteLog("重启时遇到残留进程 {0}/{1}，准备杀死", p.Id, p.ProcessName);
             try
@@ -418,17 +438,17 @@ internal class MyService : ServiceBase, IServiceProvider
             AgentSetting = AgentSetting,
         };
 
-        // 登录后保存证书
-        client.OnLogined += (s, e) =>
-        {
-            var inf = e.Response;
-            if (inf != null && !inf.Code.IsNullOrEmpty())
-            {
-                set.Code = inf.Code;
-                set.Secret = inf.Secret;
-                set.Save();
-            }
-        };
+        //// 登录后保存证书
+        //client.OnLogined += (s, e) =>
+        //{
+        //    var inf = e.Response;
+        //    if (inf != null && !inf.Code.IsNullOrEmpty())
+        //    {
+        //        set.Code = inf.Code;
+        //        set.Secret = inf.Secret;
+        //        set.Save();
+        //    }
+        //};
 
         // 服务迁移
         client.OnMigration += OnMigration;

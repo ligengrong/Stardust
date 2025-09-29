@@ -7,6 +7,7 @@ using System.Xml.Serialization;
 using NewLife;
 using NewLife.Data;
 using NewLife.Log;
+using NewLife.Remoting.Models;
 using NewLife.Serialization;
 using Stardust.Models;
 using XCode;
@@ -15,7 +16,7 @@ using XCode.Membership;
 namespace Stardust.Data.Nodes;
 
 /// <summary>节点在线</summary>
-public partial class NodeOnline : Entity<NodeOnline>
+public partial class NodeOnline : Entity<NodeOnline>, IOnlineModel2
 {
     #region 对象操作
     static NodeOnline()
@@ -70,6 +71,8 @@ public partial class NodeOnline : Entity<NodeOnline>
     /// <summary>城市名</summary>
     [Map(__.CityID)]
     public String CityName => City?.Path ?? Province?.Path;
+
+    String IOnlineModel.SessionId { get => SessionID; set => SessionID = value; }
     #endregion
 
     #region 扩展查询
@@ -83,16 +86,18 @@ public partial class NodeOnline : Entity<NodeOnline>
     /// <returns></returns>
     public static NodeOnline FindByNodeId(Int32 nodeId) => Find(__.NodeID, nodeId);
 
-    ///// <summary>根据会话查找</summary>
-    ///// <param name="sessionid">会话</param>
-    ///// <param name="cache">是否走缓存</param>
-    ///// <returns></returns>
-    //public static NodeOnline FindBySessionID(String sessionid, Boolean cache = true)
-    //{
-    //    if (!cache) return Find(_.SessionID == sessionid);
+    /// <summary>根据会话查找</summary>
+    /// <param name="sessionId">会话</param>
+    /// <param name="cache">是否走缓存</param>
+    /// <returns></returns>
+    public static NodeOnline FindBySessionId(String sessionId, Boolean cache)
+    {
+        if (sessionId.IsNullOrEmpty()) return null;
 
-    //    return Meta.SingleCache.GetItemWithSlaveKey(sessionid) as NodeOnline;
-    //}
+        if (!cache) return Find(_.SessionID == sessionId);
+
+        return Meta.SingleCache.GetItemWithSlaveKey(sessionId) as NodeOnline;
+    }
 
     /// <summary>根据节点查找所有在线记录</summary>
     /// <param name="nodeId"></param>
@@ -177,9 +182,9 @@ public partial class NodeOnline : Entity<NodeOnline>
 
     #region 业务操作
     /// <summary>根据编码查询或添加</summary>
-    /// <param name="sessionid"></param>
+    /// <param name="sessionId"></param>
     /// <returns></returns>
-    public static NodeOnline GetOrAdd(String sessionid) => GetOrAdd(sessionid, FindBySessionID, k => new NodeOnline { SessionID = k });
+    public static NodeOnline GetOrAdd(String sessionId) => GetOrAdd(sessionId, FindBySessionId, k => new NodeOnline { SessionID = k });
 
     /// <summary>删除过期，指定过期时间</summary>
     /// <param name="expire">超时时间，秒</param>
@@ -196,39 +201,39 @@ public partial class NodeOnline : Entity<NodeOnline>
         return list;
     }
 
-    /// <summary>更新并保存在线状态</summary>
-    /// <param name="di"></param>
-    /// <param name="pi"></param>
-    /// <param name="token"></param>
-    /// <param name="ip"></param>
-    public void Save(NodeInfo di, PingInfo pi, String token, String ip)
-    {
-        var olt = this;
+    ///// <summary>更新并保存在线状态</summary>
+    ///// <param name="di"></param>
+    ///// <param name="pi"></param>
+    ///// <param name="token"></param>
+    ///// <param name="ip"></param>
+    //public void Save(NodeInfo di, PingInfo pi, String token, String ip)
+    //{
+    //    var olt = this;
 
-        if (di != null)
-        {
-            olt.Fill(di);
-            olt.LocalTime = di.Time.ToLocalTime();
-            olt.MACs = di.Macs;
-            //olt.COMs = di.COMs;
-        }
-        else
-        {
-            olt.Fill(pi);
-            olt.CreateData(pi, ip);
-        }
+    //    if (di != null)
+    //    {
+    //        olt.Fill(di);
+    //        olt.LocalTime = di.Time.ToLocalTime();
+    //        olt.MACs = di.Macs;
+    //        //olt.COMs = di.COMs;
+    //    }
+    //    else
+    //    {
+    //        olt.Fill(pi);
+    //        olt.CreateData(pi, ip);
+    //    }
 
-        olt.Token = token;
-        olt.PingCount++;
-        olt.UpdateIP = ip;
-        olt.TraceId = DefaultSpan.Current?.TraceId;
+    //    olt.Token = token;
+    //    olt.PingCount++;
+    //    olt.UpdateIP = ip;
+    //    olt.TraceId = DefaultSpan.Current?.TraceId;
 
-        // 5秒内直接保存
-        if (olt.CreateTime.AddSeconds(5) > DateTime.Now)
-            olt.Save();
-        else
-            olt.SaveAsync();
-    }
+    //    // 5秒内直接保存
+    //    if (olt.CreateTime.AddSeconds(5) > DateTime.Now)
+    //        olt.Save();
+    //    else
+    //        olt.SaveAsync();
+    //}
 
     /// <summary>填充节点信息</summary>
     /// <param name="inf"></param>
@@ -268,6 +273,8 @@ public partial class NodeOnline : Entity<NodeOnline>
         if (inf.TcpConnections > 0) online.TcpConnections = inf.TcpConnections;
         if (inf.TcpTimeWait > 0) online.TcpTimeWait = inf.TcpTimeWait;
         if (inf.TcpCloseWait > 0) online.TcpCloseWait = inf.TcpCloseWait;
+        if (inf.IntranetScore > 0) online.IntranetScore = inf.IntranetScore;
+        if (inf.InternetScore > 0) online.InternetScore = inf.InternetScore;
         if (inf.Uptime > 0) online.Uptime = inf.Uptime;
         if (inf.Delay > 0) online.Delay = inf.Delay;
 
@@ -314,6 +321,8 @@ public partial class NodeOnline : Entity<NodeOnline>
             TcpConnections = inf.TcpConnections,
             TcpTimeWait = inf.TcpTimeWait,
             TcpCloseWait = inf.TcpCloseWait,
+            IntranetScore = inf.IntranetScore,
+            InternetScore = inf.InternetScore,
             Uptime = inf.Uptime,
             Delay = inf.Delay,
             LocalTime = dt,
@@ -324,6 +333,35 @@ public partial class NodeOnline : Entity<NodeOnline>
 
         //data.SaveAsync();
         data.Insert();
+    }
+
+    public Int32 Save(IPingRequest request, Object context)
+    {
+        if (context is DeviceContext ctx)
+        {
+            Token = ctx.Token;
+            UpdateIP = ctx.UserHost;
+
+            if (ctx.Device is Node node)
+            {
+                Name = node.Name;
+                Category = node.Category;
+                Version = node.Version;
+                CompileTime = node.CompileTime;
+                OSKind = node.OSKind;
+                //Save(null, inf, context.Token, ip);
+            }
+            if (request is PingInfo ping)
+            {
+                Fill(ping);
+                CreateData(ping, ctx.UserHost);
+            }
+        }
+
+        PingCount++;
+
+        //return SaveAsync() ? 1 : 0;
+        return Update();
     }
     #endregion
 }

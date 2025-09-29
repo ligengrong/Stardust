@@ -23,6 +23,10 @@ public class AppMeterController : EntityController<AppMeter>
             var df = ListFields.GetField("ClientId") as ListField;
             df.Url = "/Registry/AppMeter?appId={AppId}&clientId={ClientId}";
         }
+        {
+            var df = ListFields.GetField("Source") as ListField;
+            df.Url = "/Registry/AppMeter?appId={AppId}&clientId={ClientId}&source={Source}";
+        }
     }
 
     public override void OnActionExecuting(ActionExecutingContext filterContext)
@@ -56,6 +60,7 @@ public class AppMeterController : EntityController<AppMeter>
 
         var appId = p["appId"].ToInt(-1);
         var clientId = p["clientId"];
+        var source = p["source"];
 
         // 应用在线多IP时，只取第一个
         if (!clientId.IsNullOrEmpty())
@@ -70,7 +75,17 @@ public class AppMeterController : EntityController<AppMeter>
         if (appId > 0)
         {
             // 最近24小时
-            if (p.PageSize == 20 && appId > 0) p.PageSize = 1440;
+            if (p.PageSize == 20 && appId > 0)
+            {
+                p.PageSize = 1440;
+
+                // 默认查询最近24小时。如果指定了应用，还需要根据应用心跳间隔来调整
+                var app = App.FindById(appId);
+                if (app != null && app.Period > 0)
+                {
+                    p.PageSize = 24 * 3600 / app.Period;
+                }
+            }
 
             //// 自动客户端
             //if (clientId.IsNullOrEmpty())
@@ -90,7 +105,7 @@ public class AppMeterController : EntityController<AppMeter>
 
         if (p.Sort.IsNullOrEmpty()) p.OrderBy = _.Id.Desc();
 
-        var list = AppMeter.Search(appId, clientId, start, end, p["Q"], p);
+        var list = AppMeter.Search(appId, clientId, source, start, end, p["Q"], p);
 
         // 如果没有clientId，则可能列表数据里面只有一个，选择它，便于展示图表
         if (list.Count > 0 && clientId.IsNullOrEmpty())
@@ -114,10 +129,10 @@ public class AppMeterController : EntityController<AppMeter>
                 };
                 chart.SetX(list2, _.Time, e => (e.Time.Year > 2000 ? e.Time : e.CreateTime).ToFullString());
                 //chart.SetY("指标");
-                chart.YAxis = new[] {
-                    new { name = "指标", type = "value" },
-                    new { name = "百分比（%）", type = "value" }
-                };
+                chart.YAxis = [
+                    new YAxis{ Name = "指标", Type = "value" },
+                    new YAxis{ Name = "百分比（%）", Type = "value" }
+                ];
                 chart.AddDataZoom();
                 chart.AddLine(list2, _.Memory, null, true);
 

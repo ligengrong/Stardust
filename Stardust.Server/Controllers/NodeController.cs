@@ -1,83 +1,74 @@
 ﻿using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.Extensions.Options;
 using NewLife;
-using NewLife.Caching;
 using NewLife.Log;
 using NewLife.Remoting;
 using NewLife.Remoting.Extensions;
 using NewLife.Remoting.Models;
+using NewLife.Remoting.Services;
+using NewLife.Security;
 using NewLife.Web;
-using Stardust.Data.Deployment;
 using Stardust.Data.Nodes;
 using Stardust.Models;
 using Stardust.Server.Services;
-using XCode;
 using XCode.Membership;
-using TokenService = Stardust.Server.Services.TokenService;
 using WebSocket = System.Net.WebSockets.WebSocket;
 
 namespace Stardust.Server.Controllers;
 
 [ApiController]
 [Route("[controller]")]
-public class NodeController : BaseController
+public class NodeController(NodeService nodeService, ITokenService tokenService, NodeSessionManager sessionManager, IServiceProvider serviceProvider, ITracer tracer) : BaseController(nodeService, tokenService, serviceProvider)
 {
-    private Node _node;
-    private String _clientId;
-    private readonly ICacheProvider _cacheProvider;
-    private readonly ITracer _tracer;
-    private readonly IOptions<JsonOptions> _jsonOptions;
-    private readonly NodeService _nodeService;
-    private readonly TokenService _tokenService;
-    private readonly DeployService _deployService;
-    private readonly NodeSessionManager _sessionManager;
-    private readonly StarServerSetting _setting;
-
-    public NodeController(NodeService nodeService, TokenService tokenService, DeployService deployService, NodeSessionManager sessionManager, StarServerSetting setting, ICacheProvider cacheProvider, IServiceProvider serviceProvider, ITracer tracer, IOptions<JsonOptions> jsonOptions) : base(serviceProvider)
-    {
-        _cacheProvider = cacheProvider;
-        _tracer = tracer;
-        this._jsonOptions = jsonOptions;
-        _nodeService = nodeService;
-        _tokenService = tokenService;
-        _deployService = deployService;
-        _sessionManager = sessionManager;
-        _setting = setting;
-    }
+    private static DateTime _oldVersion = new(2025, 8, 26);
 
     #region 令牌验证
-    protected override Boolean OnAuthorize(String token)
+    protected override Boolean OnAuthorize(String token, DeviceContext context)
     {
         ManageProvider.UserHost = UserHost;
 
-        var (jwt, node, ex) = _nodeService.DecodeToken(token, _setting.TokenSecret);
-        _node = node;
-        _clientId = jwt.Id;
-        if (ex != null) throw ex;
+        Exception error = null;
+        try
+        {
+            if (!base.OnAuthorize(token, context)) return false;
+        }
+        catch (Exception ex)
+        {
+            error = ex;
+        }
+
+        var node = Node.FindByCode(Jwt?.Subject);
+        if (node == null || !node.Enable) error ??= new ApiException(ApiCode.Unauthorized, "无效节点");
+
+        Context.Device = node;
+
+        // 旧版本节点允许匿名访问心跳和更新接口
+        var actionContext = context["__ActionContext"] as ActionContext;
+        var action = (actionContext.ActionDescriptor as ControllerActionDescriptor)?.ActionName;
+        if (error is ApiException aex && aex.Code == ApiCode.Unauthorized &&
+            node != null && node.CompileTime < _oldVersion &&
+            action.EqualIgnoreCase(nameof(Ping), nameof(Upgrade)))
+        {
+            error = null;
+        }
+
+        if (error != null) throw error;
 
         return node != null;
-    }
-
-    /// <summary>写日志</summary>
-    /// <param name="action"></param>
-    /// <param name="success"></param>
-    /// <param name="message"></param>
-    public override void WriteLog(String action, Boolean success, String message)
-    {
-        var hi = NodeHistory.Create(_node, action, success, message, Environment.MachineName, UserHost);
-        hi.Insert();
     }
     #endregion
 
     #region 登录注销
     [AllowAnonymous]
     [HttpPost(nameof(Login))]
-    public LoginResponse Login(JsonElement data)
+    public ILoginResponse Login(JsonElement data)
     {
         // 由于客户端的多样性，这里需要手工控制序列化。某些客户端的节点信息跟密钥信息在同一层级。
-        var options = _jsonOptions.Value.JsonSerializerOptions;
+        var jsonOptions = HttpContext.RequestServices.GetService<IOptions<JsonOptions>>();
+        var options = jsonOptions.Value.JsonSerializerOptions;
         var inf = data.Deserialize<LoginInfo>(options);
         if (inf.Node == null || inf.Node.UUID.IsNullOrEmpty() && inf.Node.MachineGuid.IsNullOrEmpty() && inf.Node.Macs.IsNullOrEmpty())
         {
@@ -88,9 +79,9 @@ public class NodeController : BaseController
         var code = inf.Code;
         var node = Node.FindByCode(code, true);
         var oldSecret = node?.Secret;
-        _node = node;
+        Context.Device = node;
 
-        if (node != null && !node.Enable) throw new ApiException(99, "禁止登录");
+        if (node != null && !node.Enable) throw new ApiException(ApiCode.Unauthorized, "禁止登录");
 
         // 支持自动识别2020年的XCoder版本，兼容性处理
         if (inf.ProductCode.IsNullOrEmpty())
@@ -105,23 +96,41 @@ public class NodeController : BaseController
             }
         }
 
-        // 设备不存在或者验证失败，执行注册流程
-        if (node != null && !_nodeService.Auth(node, inf.Secret, inf, ip, _setting))
+        //// 设备不存在或者验证失败，执行注册流程
+        //if (node != null && !nodeService.Authorize(node, inf.Secret, inf, ip))
+        //{
+        //    node = null;
+        //}
+
+        //node ??= nodeService.Register(inf, ip);
+        //Context.Device = node;
+
+        //if (node == null) throw new ApiException(ApiCode.Unauthorized, "节点鉴权失败");
+
+        //var tokenModel = nodeService.Login(node, inf, ip);
+
+        //var rs = new LoginResponse
+        //{
+        //    Name = node.Name,
+        //    Token = tokenModel.AccessToken,
+        //};
+
+        var request = inf;
+        var rs = nodeService.Login(Context, request, "Http");
+        node = Context.Device as Node ?? throw new ApiException(ApiCode.Unauthorized, "节点鉴权失败");
+
+        //rs.Time = inf.Node.Time;
+        rs.ServerTime = DateTime.UtcNow.ToLong();
+
+        // 动态注册的设备不可用时，不要发令牌，只发证书
+        if (node.Enable)
         {
-            node = null;
+            if (request.ClientId.IsNullOrEmpty()) Context.ClientId = request.ClientId = Rand.NextString(8);
+            var tm = tokenService.IssueToken(node.Code, request.ClientId);
+
+            rs.Token = tm.AccessToken;
+            rs.Expire = tm.ExpireIn;
         }
-
-        node ??= _nodeService.Register(inf, ip, _setting);
-
-        if (node == null) throw new ApiException(12, "节点鉴权失败");
-
-        var tokenModel = _nodeService.Login(node, inf, ip, _setting);
-
-        var rs = new LoginResponse
-        {
-            Name = node.Name,
-            Token = tokenModel.AccessToken,
-        };
 
         // 动态注册，下发节点证书
         if (node.Code != code || node.Secret != oldSecret)
@@ -140,64 +149,60 @@ public class NodeController : BaseController
     [HttpPost(nameof(Logout))]
     public LoginResponse Logout(String reason)
     {
-        if (_node != null) _nodeService.Logout(_node, reason, UserHost);
+        nodeService.Logout(Context, reason, "Http");
 
         return new LoginResponse
         {
-            Name = _node?.Name,
+            Name = Context.Device?.Name,
             Token = null,
         };
     }
     #endregion
 
     #region 心跳保活
+    [HttpGet(nameof(Ping))]
     [HttpPost(nameof(Ping))]
-    public PingResponse Ping(PingInfo inf)
+    public IPingResponse Ping(PingInfo inf)
     {
-        var node = _node;
-        var rs = new MyPingResponse
-        {
-            Time = inf.Time,
-            ServerTime = DateTime.UtcNow.ToLong(),
-        };
+        var rs = nodeService.Ping(Context, inf, new MyPingResponse());
 
-        var online = _nodeService.Ping(node, inf, Token, UserHost);
-
-        if (node != null)
+        if (Context.Device is Node node)
         {
             rs.Period = node.Period;
-            rs.NewServer = !node.NewServer.IsNullOrEmpty() ? node.NewServer : node.Project?.NewServer;
 
-            // 服务端设置节点的同步时间周期时，客户端会覆盖掉；服务端未设置时，不要覆盖客户端的同步参数
-            if (node.SyncTime > 0) rs.SyncTime = node.SyncTime;
+            if (rs is IPingResponse2 rs2)
+                rs2.NewServer = !node.NewServer.IsNullOrEmpty() ? node.NewServer : node.Project?.NewServer;
+
+            if (rs is MyPingResponse mrs)
+            {
+                // 服务端设置节点的同步时间周期时，客户端会覆盖掉；服务端未设置时，不要覆盖客户端的同步参数
+                if (node.SyncTime > 0) mrs.SyncTime = node.SyncTime;
+            }
 
             // 令牌有效期检查，10分钟内到期的令牌，颁发新令牌，以获取业务的连续性。
-            //todo 这里将来由客户端提交刷新令牌，才能颁发新的访问令牌。
-            var set = _setting;
-            var tm = _tokenService.ValidAndIssueToken(node.Code, Token, set.TokenSecret, set.TokenExpire, _clientId);
-            if (tm != null)
+            var (jwt, ex) = tokenService.DecodeToken(Token);
+            if (ex == null && jwt != null && jwt.Expire < DateTime.Now.AddMinutes(10))
             {
-                using var span = _tracer?.NewSpan("RefreshNodeToken", new { node.Code, node.Name });
+                using var span = tracer?.NewSpan("RefreshNodeToken", new { node.Code, node.Name });
 
+                var tm = tokenService.IssueToken(node.Code, Context.ClientId);
                 rs.Token = tm.AccessToken;
-
-                //node.WriteHistory("刷新令牌", true, tm.ToJson(), ip);
             }
 
-            if (!node.Version.IsNullOrEmpty() && Version.TryParse(node.Version, out var ver))
-            {
-                // 拉取命令
-                if (ver.Build >= 2023 && ver.Revision >= 107)
-                    rs.Commands = _nodeService.AcquireNodeCommands(node.ID);
-            }
+            //if (!node.Version.IsNullOrEmpty() && Version.TryParse(node.Version, out var ver))
+            //{
+            //    // 拉取命令
+            //    if (ver.Build >= 2023 && ver.Revision >= 107)
+            //        rs.Commands = nodeService.AcquireCommands(node.ID);
+            //}
         }
 
         return rs;
     }
 
-    [AllowAnonymous]
-    [HttpGet(nameof(Ping))]
-    public PingResponse Ping() => new() { Time = 0, ServerTime = DateTime.UtcNow.ToLong(), };
+    //[AllowAnonymous]
+    //[HttpGet(nameof(Ping))]
+    //public PingResponse Ping() => new() { Time = 0, ServerTime = DateTime.UtcNow.ToLong(), };
     #endregion
 
     #region 升级更新
@@ -205,41 +210,30 @@ public class NodeController : BaseController
     /// <param name="channel">更新通道</param>
     /// <returns></returns>
     [HttpGet(nameof(Upgrade))]
-    public UpgradeInfo Upgrade(String channel)
+    public IUpgradeInfo Upgrade(String channel)
     {
-        var node = _node ?? throw new ApiException(401, "节点未登录");
+        var node = Context.Device as Node;
 
         // 基础路径
         var uri = Request.GetRawUrl().ToString();
         var p = uri.IndexOf('/', "https://".Length);
         if (p > 0) uri = uri[..p];
 
-        var pv = _nodeService.Upgrade(node, channel, UserHost);
-        if (pv == null)
+        var info = nodeService.Upgrade(Context, channel);
+        if (info == null)
         {
-            _nodeService.CheckDotNet(node, new Uri(uri), UserHost);
+            nodeService.CheckDotNet(node, new Uri(uri), UserHost);
 
             return null;
         }
 
-        var url = pv.Source;
-
         // 为了兼容旧版本客户端，这里必须把路径处理为绝对路径
-        if (!url.StartsWithIgnoreCase("http://", "https://"))
+        if (info != null && !info.Source.StartsWithIgnoreCase("http://", "https://"))
         {
-            url = new Uri(new Uri(uri), url) + "";
+            info.Source = new Uri(new Uri(uri), info.Source) + "";
         }
 
-        return new UpgradeInfo
-        {
-            Version = pv.Version,
-            Source = url,
-            FileHash = pv.FileHash,
-            Preinstall = pv.Preinstall,
-            Executor = pv.Executor,
-            Force = pv.Force,
-            Description = pv.Description,
-        };
+        return info!;
     }
     #endregion
 
@@ -249,93 +243,7 @@ public class NodeController : BaseController
     /// <returns></returns>
     [ApiFilter]
     [HttpPost(nameof(PostEvents))]
-    public Int32 PostEvents(EventModel[] events)
-    {
-        var ip = UserHost;
-        var his = new List<NodeHistory>();
-        var dis = new List<AppDeployHistory>();
-        foreach (var model in events)
-        {
-            var success = !model.Type.EqualIgnoreCase("error");
-            if (model.Name.EqualIgnoreCase("ServiceController"))
-            {
-                var appId = 0;
-                var p = model.Type.LastIndexOf('-');
-                if (p > 0)
-                {
-                    success = !model.Type[(p + 1)..].EqualIgnoreCase("error");
-                    appId = AppDeploy.FindByName(model.Type[..p])?.Id ?? 0;
-                }
-
-                //_deployService.WriteHistory(appId, _node?.ID ?? 0, model.Name, success, model.Remark, UserHost);
-                var dhi = AppDeployHistory.Create(appId, _node?.ID ?? 0, model.Name, success, model.Remark, ip);
-                dis.Add(dhi);
-            }
-
-            //WriteHistory(null, model.Name, success, model.Time.ToDateTime().ToLocalTime(), model.Remark);
-            var hi = NodeHistory.Create(_node, model.Name, success, model.Remark, Environment.MachineName, ip);
-            var time = model.Time.ToDateTime().ToLocalTime();
-            if (time.Year > 2000) hi.CreateTime = time;
-            his.Add(hi);
-        }
-
-        his.Insert();
-        dis.Insert();
-
-        return events.Length;
-    }
-
-    /// <summary>上报数据，针对命令</summary>
-    /// <param name="id"></param>
-    /// <returns></returns>
-    [HttpPost(nameof(Report))]
-    public async Task<Object> Report(Int32 id)
-    {
-        var node = _node ?? throw new ApiException(401, "节点未登录");
-
-        var cmd = NodeCommand.FindById(id);
-        if (cmd != null && cmd.NodeID == node.ID)
-        {
-            var ms = Request.Body;
-            if (Request.ContentLength > 0)
-            {
-                var rs = cmd.Command switch
-                {
-                    "截屏" => await SaveFileAsync(cmd, ms, "png"),
-                    "抓日志" => await SaveFileAsync(cmd, ms, "log"),
-                    _ => await SaveFileAsync(cmd, ms, "bin"),
-                };
-                if (!rs.IsNullOrEmpty())
-                {
-                    cmd.Status = CommandStatus.已完成;
-                    cmd.Result = rs;
-                    cmd.Save();
-
-                    WriteLog(cmd.Command, true, rs);
-                }
-            }
-        }
-
-        return null;
-    }
-
-    private async Task<String> SaveFileAsync(NodeCommand cmd, Stream ms, String ext)
-    {
-        var file = $"../{cmd.Command}/{DateTime.Today:yyyyMMdd}/{cmd.NodeID}_{cmd.Id}.{ext}";
-        file.EnsureDirectory(true);
-
-        using var fs = file.AsFile().OpenWrite();
-        await ms.CopyToAsync(fs);
-        await ms.FlushAsync();
-
-        return file;
-    }
-
-    /// <summary>设备端响应服务调用</summary>
-    /// <param name="model">服务</param>
-    /// <returns></returns>
-    [HttpPost(nameof(CommandReply))]
-    public Int32 CommandReply(CommandReplyModel model) => _node == null ? throw new ApiException(401, "节点未登录") : _nodeService.CommandReply(_node, model, Token);
+    public Int32 PostEvents(EventModel[] events) => nodeService.PostEvents(Context, events);
     #endregion
 
     #region 下行通知
@@ -346,20 +254,9 @@ public class NodeController : BaseController
     {
         if (HttpContext.WebSockets.IsWebSocketRequest)
         {
-            var ip = UserHost;
-            var token = (HttpContext.Request.Headers["Authorization"] + "").TrimStart("Bearer ");
             using var socket = await HttpContext.WebSockets.AcceptWebSocketAsync();
-            try
-            {
-                await HandleNotify(socket, token, ip, HttpContext.RequestAborted);
-            }
-            catch (Exception ex)
-            {
-                XTrace.WriteLine("WebSocket异常 node={0} ip={1}", _node, ip);
-                XTrace.WriteException(ex);
 
-                WriteLog("Node/Notify", false, ex?.GetTrue() + "");
-            }
+            await HandleNotify(socket, HttpContext.RequestAborted);
         }
         else
         {
@@ -367,31 +264,21 @@ public class NodeController : BaseController
         }
     }
 
-    private async Task HandleNotify(WebSocket socket, String token, String ip, CancellationToken cancellationToken)
+    private async Task HandleNotify(WebSocket socket, CancellationToken cancellationToken)
     {
-        var (_, node, error) = _nodeService.DecodeToken(token, _setting.TokenSecret);
-        _node = node ?? throw new ApiException(401, $"未登录！[ip={ip}]");
-        if (error != null) throw error;
+        var node = Context.Device as Node;
 
+        using var span = tracer?.NewSpan("cmd:Ws:Create", node.Code);
         using var session = new NodeCommandSession(socket)
         {
             Code = node.Code,
             Log = this,
-            SetOnline = online => SetOnline(node, token, ip, online)
+            SetOnline = online => nodeService.SetOnline(Context, online),
+            Tracer = tracer,
         };
-        _sessionManager.Add(session);
+        sessionManager.Add(session);
 
-        await session.WaitAsync(HttpContext, cancellationToken).ConfigureAwait(false);
-    }
-
-    private void SetOnline(Node node, String token, String ip, Boolean online)
-    {
-        var olt = _nodeService.GetOrAddOnline(node, token, ip);
-        if (olt != null)
-        {
-            olt.WebSocket = online;
-            olt.Update();
-        }
+        await session.WaitAsync(HttpContext, span, cancellationToken);
     }
 
     /// <summary>向节点发送命令。通知节点更新、安装和启停应用等</summary>
@@ -400,23 +287,18 @@ public class NodeController : BaseController
     /// <returns></returns>
     [AllowAnonymous]
     [HttpPost(nameof(SendCommand))]
-    public async Task<Int32> SendCommand(CommandInModel model, String token)
+    public Task<CommandReplyModel> SendCommand(CommandInModel model)
     {
         if (model.Code.IsNullOrEmpty()) throw new ArgumentNullException(nameof(model.Code), "必须指定节点");
         if (model.Command.IsNullOrEmpty()) throw new ArgumentNullException(nameof(model.Command));
 
-        var cmd = await _nodeService.SendCommand(model, token, _setting);
-
-        return cmd.Id;
+        return nodeService.SendCommand(Context, model);
     }
-    #endregion
 
-    #region 辅助
-    private void WriteHistory(Node node, String action, Boolean success, DateTime time, String remark, String ip = null)
-    {
-        var hi = NodeHistory.Create(node ?? _node, action, success, remark, Environment.MachineName, ip ?? UserHost);
-        if (time.Year > 2000) hi.CreateTime = time;
-        hi.Insert();
-    }
+    /// <summary>设备端响应服务调用</summary>
+    /// <param name="model">服务</param>
+    /// <returns></returns>
+    [HttpPost(nameof(CommandReply))]
+    public Int32 CommandReply(CommandReplyModel model) => nodeService.CommandReply(Context, model);
     #endregion
 }

@@ -22,7 +22,7 @@
 
   <PropertyGroup Condition="'$(TargetFramework)'=='net8.0'">
     <ServerGarbageCollection>true</ServerGarbageCollection>
-    <GarbageCollectionAdapatationMode>1</GarbageCollectionAdapatationMode>
+    <GarbageCollectionAdaptationMode>1</GarbageCollectionAdaptationMode>
     <!--<PublishAot>true</PublishAot>
     <OptimizationPreference>Size</OptimizationPreference>
     <InvariantGlobalization>true</InvariantGlobalization>
@@ -41,13 +41,14 @@
     <Compile Remove="Controllers\DustController.cs" />
     <Compile Remove="Models\CommandInModel.cs" />
     <Compile Remove="Services\CacheFileProvider.cs" />
+    <Compile Remove="Services\TokenService.cs" />
     <Compile Remove="StarService.cs" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="NewLife.IP" Version="2.3.2025.513-beta0825" />
-    <PackageReference Include="NewLife.Redis" Version="6.2.2025.505-beta1201" />
-    <PackageReference Include="NewLife.Remoting.Extensions" Version="3.3.2025.527-beta1716" />
+    <PackageReference Include="NewLife.IP" Version="2.3.2025.808-beta1117" />
+    <PackageReference Include="NewLife.Redis" Version="6.3.2025.820-beta1830" />
+    <PackageReference Include="NewLife.Remoting.Extensions" Version="3.5.2025.915-beta1636" />
   </ItemGroup>
 
   <ItemGroup>

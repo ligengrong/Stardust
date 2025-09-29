@@ -43,15 +43,15 @@ public class StarAgentSetting : Config<StarAgentSetting>
 
     /// <summary>用户名称。用户模式存储，服务模式读取</summary>
     [Description("用户名称。用户模式存储，服务模式读取")]
-    public String UserName { get; set; }
+    public String? UserName { get; set; }
 
     /// <summary>像素点。例如96*96。用户模式存储，服务模式读取</summary>
     [Description("像素点。例如96*96。用户模式存储，服务模式读取")]
-    public String Dpi { get; set; }
+    public String? Dpi { get; set; }
 
     /// <summary>分辨率。例如1024*768。用户模式存储，服务模式读取</summary>
     [Description("分辨率。例如1024*768。用户模式存储，服务模式读取")]
-    public String Resolution { get; set; }
+    public String? Resolution { get; set; }
 
     /// <summary>延迟时间。重启进程或服务的延迟时间，默认3000ms</summary>
     [Description("延迟时间。重启进程或服务的延迟时间，默认3000ms")]
@@ -60,6 +60,10 @@ public class StarAgentSetting : Config<StarAgentSetting>
     /// <summary>同步时间间隔。定期同步服务器时间到本地，默认0秒不同步</summary>
     [Description("同步时间间隔。定期同步服务器时间到本地，默认0秒不同步")]
     public Int32 SyncTime { get; set; }
+
+    /// <summary>启动挂钩。拉起目标进程时，对dotNet应用注入星尘监控钩子，默认false</summary>
+    [Description("启动挂钩。拉起目标进程时，对dotNet应用注入星尘监控钩子，默认false")]
+    public Boolean StartupHook { get; set; }
 
     /// <summary>应用服务集合</summary>
     [Description("应用服务集合")]

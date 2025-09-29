@@ -14,26 +14,13 @@ using Stardust.Models;
 
 namespace Stardust.Server.Services;
 
-public class AlarmService : IHostedService
+public class AlarmService(StarServerSetting setting, IServiceProvider serviceProvider, ITracer tracer) : IHostedService
 {
     /// <summary>计算周期。默认30秒</summary>
-    public Int32 Period { get; set; } = 30;
+    public Int32 Period { get; set; } = setting.AlarmPeriod;
 
     private TimerX _timer;
     private ICache _cache;
-    private readonly StarServerSetting _setting;
-    private readonly IServiceProvider _serviceProvider;
-    private readonly ITracer _tracer;
-
-    public AlarmService(StarServerSetting setting, IServiceProvider serviceProvider, ITracer tracer)
-    {
-        _setting = setting;
-        _serviceProvider = serviceProvider;
-        //_cache = cacheProvider.Cache;
-        _tracer = tracer;
-
-        Period = setting.AlarmPeriod;
-    }
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
@@ -52,7 +39,7 @@ public class AlarmService : IHostedService
 
     private void DoAlarm(Object state)
     {
-        _cache ??= _serviceProvider.GetService<ICacheProvider>()?.Cache;
+        _cache ??= serviceProvider.GetService<ICacheProvider>()?.Cache;
 
         // 应用告警
         var list = AppTracer.FindAllWithCache();
@@ -91,7 +78,7 @@ public class AlarmService : IHostedService
         var webhook = RobotHelper.GetAlarm(app.Project, app.Category, app.AlarmRobot);
         if (webhook.IsNullOrEmpty()) return;
 
-        using var span = _tracer?.NewSpan($"alarm:{nameof(AppTracer)}");
+        using var span = tracer?.NewSpan($"alarm:{nameof(AppTracer)}");
 
         // 最近一段时间的5分钟级数据
         var time = DateTime.Now;
@@ -128,7 +115,7 @@ public class AlarmService : IHostedService
         sb.AppendLine($">**总数：**<font color=\"red\">{st.Errors}</font>");
         sb.AppendLine($">**错误率：**<font color=\"red\">{st.ErrorRate:p2}</font>");
 
-        var url = _setting.WebUrl;
+        var url = setting.WebUrl;
         var appUrl = "";
         var traceUrl = "";
         if (!url.IsNullOrEmpty())
@@ -213,7 +200,7 @@ public class AlarmService : IHostedService
             var time = DateTime.Now;
             var minute = time.Date.AddHours(time.Hour).AddMinutes(time.Minute / 5 * 5);
 
-            using var span = _tracer?.NewSpan($"alarm:{nameof(TraceItem)}", new { appId = app.ID, time, minute });
+            using var span = tracer?.NewSpan($"alarm:{nameof(TraceItem)}", new { appId = app.ID, time, minute });
 
             var list = TraceMinuteStat.Search(app.ID, minute, tis.Select(e => e.Id).ToArray());
             foreach (var st in list)
@@ -265,7 +252,7 @@ public class AlarmService : IHostedService
         sb.AppendLine($">**总数：**<font color=\"red\">{st.Errors}</font>");
         sb.AppendLine($">**错误率：**<font color=\"red\">{st.ErrorRate:p2}</font>");
 
-        var url = _setting.WebUrl;
+        var url = setting.WebUrl;
         var traceUrl = "";
         if (!url.IsNullOrEmpty())
         {
@@ -336,7 +323,7 @@ public class AlarmService : IHostedService
         var hour = time.Date.AddHours(time.Hour);
         if (time.Minute < 5) return;
 
-        using var span = _tracer?.NewSpan($"alarm:RingRate", new { app.ID, app.Name, app.DisplayName, time, hour });
+        using var span = tracer?.NewSpan($"alarm:RingRate", new { app.ID, app.Name, app.DisplayName, time, hour });
 
         var list = TraceHourStat.Search(app.ID, -1, null, hour, hour.AddHours(1), null, null);
         foreach (var st in list)
@@ -395,7 +382,7 @@ public class AlarmService : IHostedService
         sb.AppendLine($">**环比：**<font color=\"red\">{st.RingRate:p2}</font>");
         sb.AppendLine($">**折算环比：**<font color=\"red\">{rate:p2}</font>");
 
-        var url = _setting.WebUrl;
+        var url = setting.WebUrl;
         var traceUrl = "";
         if (!url.IsNullOrEmpty())
         {
@@ -425,7 +412,7 @@ public class AlarmService : IHostedService
 
         if (node.AlarmCpuRate <= 0 && node.AlarmMemoryRate <= 0 && node.AlarmDiskRate <= 0 && node.AlarmProcesses.IsNullOrEmpty()) return;
 
-        using var span = _tracer?.NewSpan($"alarm:{nameof(Node)}");
+        using var span = tracer?.NewSpan($"alarm:{nameof(Node)}");
 
         // 最新数据
         var data = NodeData.FindLast(node.ID);
@@ -604,7 +591,7 @@ public class AlarmService : IHostedService
         if (str.Length > 2000) str = str[..2000];
 
         // 构造网址
-        var url = _setting.WebUrl;
+        var url = setting.WebUrl;
         if (!url.IsNullOrEmpty())
         {
             url = url.EnsureEnd("/") + "Nodes/NodeData?nodeId=" + node.ID;
@@ -636,7 +623,7 @@ public class AlarmService : IHostedService
         var data = RedisData.FindLast(node.Id);
         if (data == null) return;
 
-        using var span = _tracer?.NewSpan($"alarm:{nameof(RedisNode)}");
+        using var span = tracer?.NewSpan($"alarm:{nameof(RedisNode)}");
 
         var actions = new List<Action<StringBuilder>>();
 
@@ -748,7 +735,7 @@ public class AlarmService : IHostedService
         if (str.Length > 2000) str = str[..2000];
 
         // 构造网址
-        var url = _setting.WebUrl;
+        var url = setting.WebUrl;
         if (!url.IsNullOrEmpty())
         {
             url = url.EnsureEnd("/") + "Nodes/RedisNode?id=" + node.Id;
@@ -762,7 +749,7 @@ public class AlarmService : IHostedService
     #region Redis队列告警
     private void ProcessRedisQueue(RedisNode node)
     {
-        using var span = _tracer?.NewSpan($"alarm:{nameof(RedisMessageQueue)}");
+        using var span = tracer?.NewSpan($"alarm:{nameof(RedisMessageQueue)}");
 
         // 所有队列
         var list = RedisMessageQueue.FindAllByRedisId(node.Id);
@@ -805,7 +792,7 @@ public class AlarmService : IHostedService
         if (str.Length > 2000) str = str[..2000];
 
         // 构造网址
-        var url = _setting.WebUrl;
+        var url = setting.WebUrl;
         if (!url.IsNullOrEmpty())
         {
             url = url.EnsureEnd("/") + "Nodes/RedisMessageQueue?redisId=" + queue.RedisId + "&q=" + queue.Name;

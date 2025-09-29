@@ -111,6 +111,22 @@ public partial class AppDeploy
     [BindColumn("PackageName", "包名。用于判断上传包名是否正确，避免错误上传其它应用包，支持*模糊匹配", "")]
     public String PackageName { get => _PackageName; set { if (OnPropertyChanging("PackageName", value)) { _PackageName = value; OnPropertyChanged("PackageName"); } } }
 
+    private Int32 _Port;
+    /// <summary>监听端口。应用自身监听的端口，如果是dotnet应用会增加urls参数</summary>
+    [DisplayName("监听端口")]
+    [Description("监听端口。应用自身监听的端口，如果是dotnet应用会增加urls参数")]
+    [DataObjectField(false, false, false, 0)]
+    [BindColumn("Port", "监听端口。应用自身监听的端口，如果是dotnet应用会增加urls参数", "")]
+    public Int32 Port { get => _Port; set { if (OnPropertyChanging("Port", value)) { _Port = value; OnPropertyChanged("Port"); } } }
+
+    private String _Urls;
+    /// <summary>服务地址。对外提供服务的域名端口地址，自动生成nginx配置，如https://sso.newlifex.com</summary>
+    [DisplayName("服务地址")]
+    [Description("服务地址。对外提供服务的域名端口地址，自动生成nginx配置，如https://sso.newlifex.com")]
+    [DataObjectField(false, false, true, 50)]
+    [BindColumn("Urls", "服务地址。对外提供服务的域名端口地址，自动生成nginx配置，如https://sso.newlifex.com", "")]
+    public String Urls { get => _Urls; set { if (OnPropertyChanging("Urls", value)) { _Urls = value; OnPropertyChanged("Urls"); } } }
+
     private String _Repository;
     /// <summary>代码库。下载代码的位置</summary>
     [Category("编译参数")]
@@ -130,12 +146,12 @@ public partial class AppDeploy
     public String Branch { get => _Branch; set { if (OnPropertyChanging("Branch", value)) { _Branch = value; OnPropertyChanged("Branch"); } } }
 
     private String _ProjectPath;
-    /// <summary>项目路径。需要编译的项目路径</summary>
+    /// <summary>项目路径。需要编译的项目路径，相对于代码库根目录</summary>
     [Category("编译参数")]
     [DisplayName("项目路径")]
-    [Description("项目路径。需要编译的项目路径")]
+    [Description("项目路径。需要编译的项目路径，相对于代码库根目录")]
     [DataObjectField(false, false, true, 50)]
-    [BindColumn("ProjectPath", "项目路径。需要编译的项目路径", "")]
+    [BindColumn("ProjectPath", "项目路径。需要编译的项目路径，相对于代码库根目录", "")]
     public String ProjectPath { get => _ProjectPath; set { if (OnPropertyChanging("ProjectPath", value)) { _ProjectPath = value; OnPropertyChanged("ProjectPath"); } } }
 
     private Stardust.Models.ProjectKinds _ProjectKind;
@@ -146,6 +162,15 @@ public partial class AppDeploy
     [DataObjectField(false, false, false, 0)]
     [BindColumn("ProjectKind", "项目类型。默认dotnet", "", DefaultValue = "1")]
     public Stardust.Models.ProjectKinds ProjectKind { get => _ProjectKind; set { if (OnPropertyChanging("ProjectKind", value)) { _ProjectKind = value; OnPropertyChanged("ProjectKind"); } } }
+
+    private String _BuildArgs;
+    /// <summary>编译参数。编译项目时所需参数</summary>
+    [Category("编译参数")]
+    [DisplayName("编译参数")]
+    [Description("编译参数。编译项目时所需参数")]
+    [DataObjectField(false, false, true, 200)]
+    [BindColumn("BuildArgs", "编译参数。编译项目时所需参数", "")]
+    public String BuildArgs { get => _BuildArgs; set { if (OnPropertyChanging("BuildArgs", value)) { _BuildArgs = value; OnPropertyChanged("BuildArgs"); } } }
 
     private String _PackageFilters;
     /// <summary>打包过滤器。需要打包哪些文件，支持通配符，多项分号隔开</summary>
@@ -209,6 +234,15 @@ public partial class AppDeploy
     [DataObjectField(false, false, false, 0)]
     [BindColumn("MaxMemory", "最大内存。单位M，超过上限时自动重启应用，默认0不限制", "")]
     public Int32 MaxMemory { get => _MaxMemory; set { if (OnPropertyChanging("MaxMemory", value)) { _MaxMemory = value; OnPropertyChanged("MaxMemory"); } } }
+
+    private Stardust.Models.ProcessPriority _Priority;
+    /// <summary>优先级。表示应用程序中任务或操作的优先级级别</summary>
+    [Category("发布参数")]
+    [DisplayName("优先级")]
+    [Description("优先级。表示应用程序中任务或操作的优先级级别")]
+    [DataObjectField(false, false, false, 0)]
+    [BindColumn("Priority", "优先级。表示应用程序中任务或操作的优先级级别", "")]
+    public Stardust.Models.ProcessPriority Priority { get => _Priority; set { if (OnPropertyChanging("Priority", value)) { _Priority = value; OnPropertyChanged("Priority"); } } }
 
     private Stardust.Models.ServiceModes _Mode;
     /// <summary>工作模式。0默认exe/zip；1仅解压；2解压后运行；3仅运行一次；4多实例exe/zip</summary>
@@ -320,10 +354,13 @@ public partial class AppDeploy
             "MultiVersion" => _MultiVersion,
             "AutoPublish" => _AutoPublish,
             "PackageName" => _PackageName,
+            "Port" => _Port,
+            "Urls" => _Urls,
             "Repository" => _Repository,
             "Branch" => _Branch,
             "ProjectPath" => _ProjectPath,
             "ProjectKind" => _ProjectKind,
+            "BuildArgs" => _BuildArgs,
             "PackageFilters" => _PackageFilters,
             "FileName" => _FileName,
             "Arguments" => _Arguments,
@@ -331,6 +368,7 @@ public partial class AppDeploy
             "UserName" => _UserName,
             "Environments" => _Environments,
             "MaxMemory" => _MaxMemory,
+            "Priority" => _Priority,
             "Mode" => _Mode,
             "AutoStop" => _AutoStop,
             "ReloadOnChange" => _ReloadOnChange,
@@ -358,10 +396,13 @@ public partial class AppDeploy
                 case "MultiVersion": _MultiVersion = value.ToBoolean(); break;
                 case "AutoPublish": _AutoPublish = value.ToBoolean(); break;
                 case "PackageName": _PackageName = Convert.ToString(value); break;
+                case "Port": _Port = value.ToInt(); break;
+                case "Urls": _Urls = Convert.ToString(value); break;
                 case "Repository": _Repository = Convert.ToString(value); break;
                 case "Branch": _Branch = Convert.ToString(value); break;
                 case "ProjectPath": _ProjectPath = Convert.ToString(value); break;
                 case "ProjectKind": _ProjectKind = (Stardust.Models.ProjectKinds)value.ToInt(); break;
+                case "BuildArgs": _BuildArgs = Convert.ToString(value); break;
                 case "PackageFilters": _PackageFilters = Convert.ToString(value); break;
                 case "FileName": _FileName = Convert.ToString(value); break;
                 case "Arguments": _Arguments = Convert.ToString(value); break;
@@ -369,6 +410,7 @@ public partial class AppDeploy
                 case "UserName": _UserName = Convert.ToString(value); break;
                 case "Environments": _Environments = Convert.ToString(value); break;
                 case "MaxMemory": _MaxMemory = value.ToInt(); break;
+                case "Priority": _Priority = (Stardust.Models.ProcessPriority)value.ToInt(); break;
                 case "Mode": _Mode = (Stardust.Models.ServiceModes)value.ToInt(); break;
                 case "AutoStop": _AutoStop = value.ToBoolean(); break;
                 case "ReloadOnChange": _ReloadOnChange = value.ToBoolean(); break;
@@ -436,17 +478,26 @@ public partial class AppDeploy
         /// <summary>包名。用于判断上传包名是否正确，避免错误上传其它应用包，支持*模糊匹配</summary>
         public static readonly Field PackageName = FindByName("PackageName");
 
+        /// <summary>监听端口。应用自身监听的端口，如果是dotnet应用会增加urls参数</summary>
+        public static readonly Field Port = FindByName("Port");
+
+        /// <summary>服务地址。对外提供服务的域名端口地址，自动生成nginx配置，如https://sso.newlifex.com</summary>
+        public static readonly Field Urls = FindByName("Urls");
+
         /// <summary>代码库。下载代码的位置</summary>
         public static readonly Field Repository = FindByName("Repository");
 
         /// <summary>分支。默认master</summary>
         public static readonly Field Branch = FindByName("Branch");
 
-        /// <summary>项目路径。需要编译的项目路径</summary>
+        /// <summary>项目路径。需要编译的项目路径，相对于代码库根目录</summary>
         public static readonly Field ProjectPath = FindByName("ProjectPath");
 
         /// <summary>项目类型。默认dotnet</summary>
         public static readonly Field ProjectKind = FindByName("ProjectKind");
+
+        /// <summary>编译参数。编译项目时所需参数</summary>
+        public static readonly Field BuildArgs = FindByName("BuildArgs");
 
         /// <summary>打包过滤器。需要打包哪些文件，支持通配符，多项分号隔开</summary>
         public static readonly Field PackageFilters = FindByName("PackageFilters");
@@ -468,6 +519,9 @@ public partial class AppDeploy
 
         /// <summary>最大内存。单位M，超过上限时自动重启应用，默认0不限制</summary>
         public static readonly Field MaxMemory = FindByName("MaxMemory");
+
+        /// <summary>优先级。表示应用程序中任务或操作的优先级级别</summary>
+        public static readonly Field Priority = FindByName("Priority");
 
         /// <summary>工作模式。0默认exe/zip；1仅解压；2解压后运行；3仅运行一次；4多实例exe/zip</summary>
         public static readonly Field Mode = FindByName("Mode");
@@ -538,17 +592,26 @@ public partial class AppDeploy
         /// <summary>包名。用于判断上传包名是否正确，避免错误上传其它应用包，支持*模糊匹配</summary>
         public const String PackageName = "PackageName";
 
+        /// <summary>监听端口。应用自身监听的端口，如果是dotnet应用会增加urls参数</summary>
+        public const String Port = "Port";
+
+        /// <summary>服务地址。对外提供服务的域名端口地址，自动生成nginx配置，如https://sso.newlifex.com</summary>
+        public const String Urls = "Urls";
+
         /// <summary>代码库。下载代码的位置</summary>
         public const String Repository = "Repository";
 
         /// <summary>分支。默认master</summary>
         public const String Branch = "Branch";
 
-        /// <summary>项目路径。需要编译的项目路径</summary>
+        /// <summary>项目路径。需要编译的项目路径，相对于代码库根目录</summary>
         public const String ProjectPath = "ProjectPath";
 
         /// <summary>项目类型。默认dotnet</summary>
         public const String ProjectKind = "ProjectKind";
+
+        /// <summary>编译参数。编译项目时所需参数</summary>
+        public const String BuildArgs = "BuildArgs";
 
         /// <summary>打包过滤器。需要打包哪些文件，支持通配符，多项分号隔开</summary>
         public const String PackageFilters = "PackageFilters";
@@ -570,6 +633,9 @@ public partial class AppDeploy
 
         /// <summary>最大内存。单位M，超过上限时自动重启应用，默认0不限制</summary>
         public const String MaxMemory = "MaxMemory";
+
+        /// <summary>优先级。表示应用程序中任务或操作的优先级级别</summary>
+        public const String Priority = "Priority";
 
         /// <summary>工作模式。0默认exe/zip；1仅解压；2解压后运行；3仅运行一次；4多实例exe/zip</summary>
         public const String Mode = "Mode";

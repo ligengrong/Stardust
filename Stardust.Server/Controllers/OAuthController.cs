@@ -2,6 +2,7 @@
 using NewLife;
 using NewLife.Remoting;
 using NewLife.Remoting.Extensions;
+using NewLife.Remoting.Services;
 using NewLife.Web;
 using Stardust.Data;
 using Stardust.Server.Models;
@@ -11,24 +12,11 @@ namespace Stardust.Server.Controllers;
 
 /// <summary>OAuth服务。向应用提供验证服务</summary>
 [Route("[controller]/[action]")]
-public class OAuthController : ControllerBase
+public class OAuthController(ITokenService tokenService, AppTokenService appTokenService, AppOnlineService appOnline, StarServerSetting setting) : ControllerBase
 {
-    private readonly TokenService _tokenService;
-    private readonly AppOnlineService _appOnline;
-    private readonly StarServerSetting _setting;
-
-    public OAuthController(TokenService tokenService, AppOnlineService appOnline, StarServerSetting setting)
-    {
-        _tokenService = tokenService;
-        _appOnline = appOnline;
-        _setting = setting;
-    }
-
     [ApiFilter]
     public TokenModel Token([FromBody] TokenInModel model)
     {
-        var set = _setting;
-
         if (model.grant_type.IsNullOrEmpty()) model.grant_type = "password";
 
         var ip = HttpContext.GetUserHost();
@@ -39,16 +27,16 @@ public class OAuthController : ControllerBase
             // 密码模式
             if (model.grant_type == "password")
             {
-                var app = _tokenService.Authorize(model.UserName, model.Password, set.AppAutoRegister, ip);
+                var app = appTokenService.Authorize(model.UserName, model.Password, setting.AppAutoRegister, ip);
 
                 // 更新应用信息
                 app.LastLogin = DateTime.Now;
                 app.LastIP = ip;
                 app.Update();
 
-                var tokenModel = _tokenService.IssueToken(app.Name, set.TokenSecret, set.TokenExpire, clientId);
+                var tokenModel = tokenService.IssueToken(app.Name, clientId);
 
-                var olt = _appOnline.UpdateOnline(app, clientId, ip, tokenModel.AccessToken);
+                var olt = appOnline.UpdateOnline(app, clientId, ip, tokenModel.AccessToken);
 
                 app.WriteHistory("Authorize", true, model.UserName, olt?.Version, ip, clientId);
 
@@ -57,13 +45,13 @@ public class OAuthController : ControllerBase
             // 刷新令牌
             else if (model.grant_type == "refresh_token")
             {
-                var (jwt, ex) = _tokenService.DecodeTokenWithError(model.refresh_token, set.TokenSecret);
+                var (jwt, ex) = tokenService.DecodeToken(model.refresh_token);
 
                 // 验证应用
                 var app = App.FindByName(jwt?.Subject);
                 if (app == null || !app.Enable)
                 {
-                    ex ??= new ApiException(403, $"无效应用[{jwt.Subject}]");
+                    ex ??= new ApiException(ApiCode.Unauthorized, $"无效应用[{jwt.Subject}]");
                 }
 
                 if (clientId.IsNullOrEmpty()) clientId = jwt.Id;
@@ -74,9 +62,9 @@ public class OAuthController : ControllerBase
                     throw ex;
                 }
 
-                var tokenModel = _tokenService.IssueToken(app.Name, set.TokenSecret, set.TokenExpire, clientId);
+                var tokenModel = tokenService.IssueToken(app.Name, clientId);
 
-                var olt = _appOnline.UpdateOnline(app, clientId, ip, tokenModel.AccessToken);
+                var olt = appOnline.UpdateOnline(app, clientId, ip, tokenModel.AccessToken);
 
                 //app.WriteHistory("RefreshToken", true, model.refresh_token, olt?.Version, ip, clientId);
 
@@ -99,7 +87,10 @@ public class OAuthController : ControllerBase
     [ApiFilter]
     public Object UserInfo(String token)
     {
-        var (_, app) = _tokenService.DecodeToken(token, _setting.TokenSecret);
+        var (jwt, ex) = tokenService.DecodeToken(token);
+        if (ex != null) throw ex;
+
+        var app = appTokenService.ValidApp(jwt?.Subject);
         return new
         {
             app.Id,
