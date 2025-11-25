@@ -9,6 +9,8 @@ using NewLife;
 using NewLife.Data;
 using NewLife.Log;
 using NewLife.Reflection;
+using NewLife.Remoting.Models;
+
 using Stardust.Data.Nodes;
 using Stardust.Models;
 
