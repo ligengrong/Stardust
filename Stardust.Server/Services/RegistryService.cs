@@ -16,15 +16,35 @@ using Service = Stardust.Data.Service;
 
 namespace Stardust.Server.Services;
 
-public class RegistryService(AppQueueService queue, AppOnlineService appOnline, IPasswordProvider passwordProvider, AppSessionManager sessionManager, ICacheProvider cacheProvider, StarServerSetting setting, ITracer tracer, IServiceProvider serviceProvider) : DefaultDeviceService<Node, NodeOnline>(sessionManager, passwordProvider, cacheProvider, serviceProvider)
+public class RegistryService : DefaultDeviceService<Node, NodeOnline>
 {
+    private readonly AppQueueService _queue;
+    private readonly AppOnlineService _appOnline;
+    private readonly IPasswordProvider _passwordProvider;
+    private readonly AppSessionManager _sessionManager;
+    private readonly ICacheProvider _cacheProvider;
+    private readonly StarServerSetting _setting;
+    private readonly ITracer _tracer;
+
+    public RegistryService(AppQueueService queue, AppOnlineService appOnline, IPasswordProvider passwordProvider, AppSessionManager sessionManager, ICacheProvider cacheProvider, StarServerSetting setting, ITracer tracer, IServiceProvider serviceProvider) : base(sessionManager, passwordProvider, cacheProvider, serviceProvider)
+    {
+        _queue = queue;
+        _appOnline = appOnline;
+        _passwordProvider = passwordProvider;
+        _sessionManager = sessionManager;
+        _cacheProvider = cacheProvider;
+        _setting = setting;
+        _tracer = tracer;
+
+        Name = "App";
+    }
+
     #region 登录注销
     public override ILoginResponse Login(DeviceContext context, ILoginRequest request, String source)
     {
         var rs = base.Login(context, request, source);
 
-        var inf = request as AppModel;
-        if (context.Online is AppOnline online)
+        if (context.Online is AppOnline online && request is AppModel inf)
         {
             // 关联节点，根据NodeCode匹配，如果未匹配上，则在未曾关联节点时才使用IP匹配
             var node = Node.FindByCode(inf.NodeCode);
@@ -44,8 +64,9 @@ public class RegistryService(AppQueueService queue, AppOnlineService appOnline, 
     {
         if (context.Device is not App app) return false;
 
+        using var span = _tracer?.NewSpan($"{Name}Authorize", new { request.Code, request.ClientId });
+
         var ip = context.UserHost;
-        var secret = request.Secret;
 
         // 检查黑白名单
         if (!app.MatchIp(ip))
@@ -58,14 +79,14 @@ public class RegistryService(AppQueueService queue, AppOnlineService appOnline, 
 
         // 未设置密钥，直接通过
         if (app.Secret.IsNullOrEmpty()) return true;
-        if (app.Secret == secret) return true;
+        if (app.Secret.EqualIgnoreCase(request.Secret)) return true;
 
-        if (setting.SaltTime > 0 && passwordProvider is SaltPasswordProvider saltProvider)
+        if (_setting.SaltTime > 0 && _passwordProvider is SaltPasswordProvider saltProvider)
         {
             // 使用盐值偏差时间，允许客户端时间与服务端时间有一定偏差
-            saltProvider.SaltTime = setting.SaltTime;
+            saltProvider.SaltTime = _setting.SaltTime;
         }
-        if (secret.IsNullOrEmpty() || !passwordProvider.Verify(app.Secret, secret))
+        if (request.Secret.IsNullOrEmpty() || !_passwordProvider.Verify(app.Secret, request.Secret))
         {
             app.WriteHistory("应用鉴权", false, "密钥校验失败", null, ip, context.ClientId);
             return false;
@@ -81,30 +102,46 @@ public class RegistryService(AppQueueService queue, AppOnlineService appOnline, 
     /// <exception cref="ApiException"></exception>
     public override IDeviceModel Register(DeviceContext context, ILoginRequest request)
     {
+        using var span = _tracer?.NewSpan($"{Name}Register", new { request.Code, request.ClientId });
+
         var name = request.Code;
 
-        // 查找应用
-        var app = App.FindByName(name);
-        // 查找或创建应用，避免多线程创建冲突
-        app ??= App.GetOrAdd(name, App.FindByName, k => new App
+        App app = null;
+        try
         {
-            Name = name,
-            Secret = Rand.NextString(16),
-            Enable = setting.AppAutoRegister,
-        });
+            // 查找应用
+            app = App.FindByName(name);
+            // 查找或创建应用，避免多线程创建冲突
+            app ??= App.GetOrAdd(name, App.FindByName, k => new App
+            {
+                Name = name,
+                Secret = Rand.NextString(16),
+                Enable = _setting.AppAutoRegister,
+            });
 
-        app.WriteHistory("应用注册", true, $"[{app.Name}]注册成功", null, context.UserHost, context.ClientId);
-        context.Device = app;
+            app.WriteHistory("应用注册", true, $"[{app.Name}]注册成功", null, context.UserHost, context.ClientId);
+            context.Device = app;
+        }
+        catch (Exception ex)
+        {
+            span?.SetError(ex, null);
+
+            app?.WriteHistory("应用注册", false, $"[{app.Name}]注册失败！" + ex.Message, null, context.UserHost, context.ClientId);
+
+            throw;
+        }
 
         return app;
     }
 
-    /// <summary>登录中</summary>
-    /// <param name="context"></param>
-    /// <param name="request"></param>
+    /// <summary>鉴权后的登录处理。修改设备信息、创建在线记录和写日志</summary>
+    /// <param name="context">上下文</param>
+    /// <param name="request">登录请求</param>
     public override void OnLogin(DeviceContext context, ILoginRequest request)
     {
         if (context.Device is not App app) return;
+
+        using var span = _tracer?.NewSpan($"{Name}OnLogin", new { request.Code, request.ClientId });
 
         var model = request as AppModel;
         var ip = context.UserHost;
@@ -160,7 +197,7 @@ public class RegistryService(AppQueueService queue, AppOnlineService appOnline, 
         var online = base.Logout(context, reason, source);
         if (online is AppOnline online2)
         {
-            appOnline.RemoveOnline(context.ClientId);
+            _appOnline.RemoveOnline(context.ClientId);
         }
 
         return online;
@@ -184,7 +221,7 @@ public class RegistryService(AppQueueService queue, AppOnlineService appOnline, 
         if (!inf.ClientId.IsNullOrEmpty()) clientId = inf.ClientId;
 
         // 更新在线记录
-        var (online, _) = appOnline.GetOnline(app, clientId, token, inf?.IP, ip);
+        var (online, _) = _appOnline.GetOnline(app, clientId, token, inf?.IP, ip);
         if (online != null)
         {
             // 关联节点，根据NodeCode匹配，如果未匹配上，则在未曾关联节点时才使用IP匹配
@@ -353,7 +390,7 @@ public class RegistryService(AppQueueService queue, AppOnlineService appOnline, 
                 url = uri.ToString();
             }
 
-            var http = tracer.CreateHttpClient();
+            var http = _tracer.CreateHttpClient();
             var rs = await http.GetStringAsync(url);
 
             svc.Healthy = true;
@@ -468,7 +505,7 @@ public class RegistryService(AppQueueService queue, AppOnlineService appOnline, 
         // 是否有本节点
         if (!_commands.Any(e => e.AppId == appId)) return null;
 
-        using var span = tracer?.NewSpan(nameof(AcquireCommands), new { appId });
+        using var span = _tracer?.NewSpan(nameof(AcquireCommands), new { appId });
 
         var cmds = AppCommand.AcquireCommands(appId, 100);
         if (cmds.Count == 0) return null;
@@ -504,6 +541,11 @@ public class RegistryService(AppQueueService queue, AppOnlineService appOnline, 
 
         return rs.ToArray();
     }
+
+    /// <summary>获取在线。先查缓存再查库</summary>
+    /// <param name="context">上下文</param>
+    /// <returns></returns>
+    public override IOnlineModel GetOnline(DeviceContext context) => base.GetOnline(context) as AppOnline;
 
     /// <summary>设置设备的长连接上线/下线</summary>
     /// <param name="context">上下文</param>
@@ -555,19 +597,19 @@ public class RegistryService(AppQueueService queue, AppOnlineService appOnline, 
 
             //_queue.Publish(app.Name, item.Client, cmdModel);
             var code = $"{app.Name}@{item.Client}";
-            ts.Add(sessionManager.PublishAsync(code, cmdModel, null, cancellationToken));
+            ts.Add(_sessionManager.PublishAsync(code, cmdModel, null, cancellationToken));
         }
         await Task.WhenAll(ts);
 
         // 挂起等待。借助redis队列，等待响应
         if (model.Timeout > 0)
         {
-            var q = queue.GetReplyQueue(cmd.Id);
+            var q = _queue.GetReplyQueue(cmd.Id);
             var reply = await q.TakeOneAsync(model.Timeout, cancellationToken);
             if (reply != null)
             {
                 // 埋点
-                using var span = tracer?.NewSpan($"mq:AppCommandReply", reply);
+                using var span = _tracer?.NewSpan($"mq:AppCommandReply", reply);
 
                 if (reply.Status == CommandStatus.错误)
                     throw new Exception($"命令错误！{reply.Data}");
@@ -603,11 +645,11 @@ public class RegistryService(AppQueueService queue, AppOnlineService appOnline, 
 
         // 推入服务响应队列，让服务调用方得到响应
         var topic = $"appreply:{model.Id}";
-        var q = cacheProvider.GetQueue<CommandReplyModel>(topic);
+        var q = _cacheProvider.GetQueue<CommandReplyModel>(topic);
         q.Add(model);
 
         // 设置过期时间，过期自动清理
-        cacheProvider.Cache.SetExpire(topic, TimeSpan.FromSeconds(60));
+        _cacheProvider.Cache.SetExpire(topic, TimeSpan.FromSeconds(60));
 
         return 1;
     }
@@ -625,7 +667,7 @@ public class RegistryService(AppQueueService queue, AppOnlineService appOnline, 
         var appIds = list.Select(e => e.AppId).Distinct().ToArray();
         var arguments = new { service.AppName, service.ServiceName, service.Address }.ToJson();
 
-        using var span = tracer?.NewSpan(nameof(NotifyConsumers), $"{command} appIds={appIds.Join()} user={user} arguments={arguments}");
+        using var span = _tracer?.NewSpan(nameof(NotifyConsumers), $"{command} appIds={appIds.Join()} user={user} arguments={arguments}");
 
         var ts = new List<Task>();
         foreach (var item in appIds)

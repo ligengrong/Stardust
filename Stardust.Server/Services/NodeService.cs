@@ -17,17 +17,38 @@ using XCode.Configuration;
 
 namespace Stardust.Server.Services;
 
-public class NodeService(ITokenService tokenService, IPasswordProvider passwordProvider, StarServerSetting setting, NodeSessionManager sessionManager, ICacheProvider cacheProvider, ITracer tracer, IServiceProvider serviceProvider) : DefaultDeviceService<Node, NodeOnline>(sessionManager, passwordProvider, cacheProvider, serviceProvider)
+public class NodeService : DefaultDeviceService<Node, NodeOnline>
 {
+    private readonly ITokenService _tokenService;
+    private readonly IPasswordProvider _passwordProvider;
+    private readonly StarServerSetting _setting;
+    private readonly NodeSessionManager _sessionManager;
+    private readonly ICacheProvider _cacheProvider;
+    private readonly ITracer _tracer;
+
+    public NodeService(ITokenService tokenService, IPasswordProvider passwordProvider, StarServerSetting setting, NodeSessionManager sessionManager, ICacheProvider cacheProvider, ITracer tracer, IServiceProvider serviceProvider) : base(sessionManager, passwordProvider, cacheProvider, serviceProvider)
+    {
+        _tokenService = tokenService;
+        _passwordProvider = passwordProvider;
+        _setting = setting;
+        _sessionManager = sessionManager;
+        _cacheProvider = cacheProvider;
+        _tracer = tracer;
+
+        Name = "Node";
+    }
+
     #region 登录注销
     /// <summary>验证设备合法性</summary>
     public override Boolean Authorize(DeviceContext context, ILoginRequest request)
     {
         if (context.Device is not Node node) return false;
 
+        using var span = _tracer?.NewSpan($"{Name}Authorize", new { request.Code, request.ClientId });
+
         var inf = request as LoginInfo;
         var ip = context.UserHost;
-        node = CheckNode(node, inf.Node, inf.ProductCode, ip, setting.NodeCodeLevel);
+        node = CheckNode(node, inf.Node, inf.ProductCode, ip, _setting.NodeCodeLevel);
         if (node == null)
         {
             WriteHistory(node, "节点鉴权", false, "硬件信息变动过大", ip);
@@ -38,12 +59,12 @@ public class NodeService(ITokenService tokenService, IPasswordProvider passwordP
         if (node.Secret.IsNullOrEmpty()) return true;
         if (node.Secret.EqualIgnoreCase(request.Secret)) return true;
 
-        if (setting.SaltTime > 0 && passwordProvider is SaltPasswordProvider saltProvider)
+        if (_setting.SaltTime > 0 && _passwordProvider is SaltPasswordProvider saltProvider)
         {
             // 使用盐值偏差时间，允许客户端时间与服务端时间有一定偏差
-            saltProvider.SaltTime = setting.SaltTime;
+            saltProvider.SaltTime = _setting.SaltTime;
         }
-        if (request.Secret.IsNullOrEmpty() || !passwordProvider.Verify(node.Secret, request.Secret))
+        if (request.Secret.IsNullOrEmpty() || !_passwordProvider.Verify(node.Secret, request.Secret))
         {
             WriteHistory(context, "节点鉴权", false, "密钥校验失败");
             return false;
@@ -59,35 +80,52 @@ public class NodeService(ITokenService tokenService, IPasswordProvider passwordP
     /// <exception cref="ApiException"></exception>
     public override IDeviceModel Register(DeviceContext context, ILoginRequest request)
     {
+        using var span = _tracer?.NewSpan($"{Name}Register", new { request.Code, request.ClientId });
+
         var inf = request as LoginInfo;
         var node = context.Device as Node ?? QueryDevice(request.Code) as Node;
         var ip = context.UserHost;
 
-        // 校验唯一编码，防止客户端拷贝配置
-        if (node == null)
+        try
         {
-            node = AutoRegister(null, inf, ip, setting);
+            // 校验唯一编码，防止客户端拷贝配置
+            if (node == null)
+            {
+                node = AutoRegister(null, inf, ip, _setting);
+            }
+            else
+            {
+                //// 登录密码未设置或者未提交，则执行动态注册
+                //if (node == null || node.Secret.IsNullOrEmpty() || secret.IsNullOrEmpty())
+                //    node = AutoRegister(node, inf, ip, setting);
+                //else if (node.Secret.MD5() != secret)
+                //    node = AutoRegister(node, inf, ip, setting);
+                //else if (setting.NodeCodeLevel > 0)
+                //    node = AutoRegister(node, inf, ip, setting);
+                node = AutoRegister(node, inf, ip, _setting);
+            }
+
+            node?.WriteHistory("动态注册", true, inf.ToJson(false, false, false), ip);
         }
-        else
+        catch (Exception ex)
         {
-            //// 登录密码未设置或者未提交，则执行动态注册
-            //if (node == null || node.Secret.IsNullOrEmpty() || secret.IsNullOrEmpty())
-            //    node = AutoRegister(node, inf, ip, setting);
-            //else if (node.Secret.MD5() != secret)
-            //    node = AutoRegister(node, inf, ip, setting);
-            //else if (setting.NodeCodeLevel > 0)
-            //    node = AutoRegister(node, inf, ip, setting);
-            node = AutoRegister(node, inf, ip, setting);
+            span?.SetError(ex, null);
+
+            node?.WriteHistory("动态注册", false, inf.ToJson(false, false, false), ip);
+
+            throw;
         }
 
         return node;
     }
 
-    /// <summary>登录中</summary>
-    /// <param name="context"></param>
-    /// <param name="request"></param>
+    /// <summary>鉴权后的登录处理。修改设备信息、创建在线记录和写日志</summary>
+    /// <param name="context">上下文</param>
+    /// <param name="request">登录请求</param>
     public override void OnLogin(DeviceContext context, ILoginRequest request)
     {
+        using var span = _tracer?.NewSpan($"{Name}OnLogin", new { request.Code, request.ClientId });
+
         var node = context.Device as Node;
         var inf = request as LoginInfo;
         var ip = context.UserHost;
@@ -116,8 +154,6 @@ public class NodeService(ITokenService tokenService, IPasswordProvider passwordP
 
         // 登录历史
         WriteHistory(context, "节点鉴权", true, $"[{node.Name}/{node.Code}]鉴权成功 " + inf.ToJson(false, false, false));
-
-        //return tokenModel;
     }
 
     /// <summary>注销</summary>
@@ -126,6 +162,8 @@ public class NodeService(ITokenService tokenService, IPasswordProvider passwordP
     /// <returns></returns>
     public override IOnlineModel Logout(DeviceContext context, String reason, String source)
     {
+        using var span = _tracer?.NewSpan($"{Name}Logout", new { context.Code, context.ClientId, reason, source });
+
         //var node = context.Device as Node;
         //var ip = context.UserHost;
         //var online = GetOnline(node, ip);
@@ -271,7 +309,7 @@ public class NodeService(ITokenService tokenService, IPasswordProvider passwordP
         if (!IsMatchWhiteIP(set.WhiteIP, ip)) throw new ApiException(ApiCode.Forbidden, "非法来源，禁止注册");
 
         var di = inf.Node;
-        using var span = tracer?.NewSpan(nameof(AutoRegister), new { inf.ProductCode, di.UUID, di.MachineGuid, di.Macs, di.DiskID });
+        using var span = _tracer?.NewSpan(nameof(AutoRegister), new { inf.ProductCode, di.UUID, di.MachineGuid, di.Macs, di.DiskID });
 
         var code = BuildCode(di, inf.ProductCode, set);
         if (code.IsNullOrEmpty()) code = Rand.NextString(8);
@@ -325,8 +363,6 @@ public class NodeService(ITokenService tokenService, IPasswordProvider passwordP
             node.Period = 5;
             node.Update();
         }
-
-        node.WriteHistory("动态注册", true, inf.ToJson(false, false, false), ip);
 
         return node;
     }
@@ -407,7 +443,7 @@ public class NodeService(ITokenService tokenService, IPasswordProvider passwordP
 
     private String BuildCode(NodeInfo di, String productCode, StarServerSetting set)
     {
-        using var span = tracer?.NewSpan(nameof(BuildCode), new { set.NodeCodeFormula });
+        using var span = _tracer?.NewSpan(nameof(BuildCode), new { set.NodeCodeFormula });
 
         //var set = Setting.Current;
         //var uid = $"{di.UUID}@{di.MachineGuid}@{di.Macs}";
@@ -466,6 +502,8 @@ public class NodeService(ITokenService tokenService, IPasswordProvider passwordP
     public override IOnlineModel OnPing(DeviceContext context, IPingRequest request)
     {
         if (context.Device is not Node node) return null;
+
+        using var span = _tracer?.NewSpan($"{Name}OnPing", new { context.Code, context.ClientId });
 
         var inf = request as PingInfo;
         if (!inf.IP.IsNullOrEmpty()) node.IP = inf.IP;
@@ -531,7 +569,7 @@ public class NodeService(ITokenService tokenService, IPasswordProvider passwordP
         // 是否有本节点
         if (!_commands.Any(e => e.NodeID == nodeId)) return null;
 
-        using var span = tracer?.NewSpan(nameof(AcquireCommands), new { nodeId });
+        using var span = _tracer?.NewSpan(nameof(AcquireCommands), new { nodeId });
 
         var cmds = NodeCommand.AcquireCommands(nodeId, 100);
         if (cmds.Count == 0) return null;
@@ -568,6 +606,11 @@ public class NodeService(ITokenService tokenService, IPasswordProvider passwordP
         return rs.ToArray();
     }
 
+    /// <summary>获取在线。先查缓存再查库</summary>
+    /// <param name="context">上下文</param>
+    /// <returns></returns>
+    public override IOnlineModel GetOnline(DeviceContext context) => base.GetOnline(context) as NodeOnline;
+
     public NodeOnline GetOrAddOnline(Node node, String token, String ip)
     {
         var localIp = node?.IP;
@@ -583,7 +626,7 @@ public class NodeService(ITokenService tokenService, IPasswordProvider passwordP
     {
         //var sid = $"{node.ID}@{ip}";
         var sid = node.Code;
-        var olt = cacheProvider.InnerCache.Get<NodeOnline>($"NodeOnline:{sid}");
+        var olt = _cacheProvider.InnerCache.Get<NodeOnline>($"NodeOnline:{sid}");
         if (olt != null)
         {
             //_cacheProvider.InnerCache.SetExpire($"NodeOnline:{sid}", TimeSpan.FromSeconds(120));
@@ -601,6 +644,8 @@ public class NodeService(ITokenService tokenService, IPasswordProvider passwordP
     /// <returns></returns>
     public NodeOnline CreateOnline(Node node, String token, String ip)
     {
+        using var span = _tracer?.NewSpan($"{Name}CreateOnline", new { node.Code, ip });
+
         //var sid = $"{node.ID}@{ip}";
         var sid = node.Code;
         var olt = NodeOnline.GetOrAdd(sid);
@@ -638,7 +683,7 @@ public class NodeService(ITokenService tokenService, IPasswordProvider passwordP
     public void UpdateOnline(Node node, NodeOnline online)
     {
         var sid = node.Code;
-        cacheProvider.InnerCache.Set($"NodeOnline:{sid}", online, 120);
+        _cacheProvider.InnerCache.Set($"NodeOnline:{sid}", online, 120);
     }
 
     /// <summary>删除在线状态</summary>
@@ -646,7 +691,7 @@ public class NodeService(ITokenService tokenService, IPasswordProvider passwordP
     public void RemoveOnline(Node node)
     {
         var sid = node.Code;
-        cacheProvider.InnerCache.Remove($"NodeOnline:{sid}");
+        _cacheProvider.InnerCache.Remove($"NodeOnline:{sid}");
     }
 
     /// <summary>设置设备的长连接上线/下线</summary>
@@ -715,7 +760,7 @@ public class NodeService(ITokenService tokenService, IPasswordProvider passwordP
         if (list.Count == 0) return null;
 
         var ip = context.UserHost;
-        using var span = tracer?.NewSpan(nameof(Upgrade), new { node.Name, node.Code, node.Runtime, node.Framework, node.Frameworks, ip, vers = list.Count });
+        using var span = _tracer?.NewSpan(nameof(Upgrade), new { node.Name, node.Code, node.Runtime, node.Framework, node.Frameworks, ip, vers = list.Count });
 
         // 应用过滤规则，使用最新的一个版本
         var pv = list.OrderByDescending(e => e.ID).FirstOrDefault(e => e.Version != node.LastVersion && e.Match(node));
@@ -754,7 +799,7 @@ public class NodeService(ITokenService tokenService, IPasswordProvider passwordP
         var list = NodeVersion.GetValids(0).Where(e => e.ProductCode.EqualIgnoreCase("dotNet")).ToList();
         if (list.Count == 0) return null;
 
-        using var span = tracer?.NewSpan(nameof(CheckDotNet), new { node.Name, node.Code, node.Runtime, node.Framework, node.Frameworks, ip, vers = list.Count });
+        using var span = _tracer?.NewSpan(nameof(CheckDotNet), new { node.Name, node.Code, node.Runtime, node.Framework, node.Frameworks, ip, vers = list.Count });
 
         // 应用过滤规则
         list = list.OrderByDescending(e => e.ID).Where(e => e.Match(node)).ToList();
@@ -783,8 +828,8 @@ public class NodeService(ITokenService tokenService, IPasswordProvider passwordP
 
             // 检查是否已经升级过这个版本
             var key = $"nodeNet:{node.Code}-{fmodel.Version}";
-            if (cacheProvider.Cache.Get<String>(key) == pv.Version) return null;
-            cacheProvider.Cache.Set(key, pv.Version, 600);
+            if (_cacheProvider.Cache.Get<String>(key) == pv.Version) return null;
+            _cacheProvider.Cache.Set(key, pv.Version, 600);
 
             var model = new CommandInModel
             {
@@ -817,7 +862,7 @@ public class NodeService(ITokenService tokenService, IPasswordProvider passwordP
         var node = Node.FindByCode(model.Code);
         if (node == null) throw new ArgumentOutOfRangeException(nameof(model.Code), "无效节点");
 
-        var (jwt, ex) = tokenService.DecodeToken(context.Token);
+        var (jwt, ex) = _tokenService.DecodeToken(context.Token);
         if (ex != null) throw ex;
 
         var app = App.FindByName(jwt?.Subject);
@@ -857,18 +902,18 @@ public class NodeService(ITokenService tokenService, IPasswordProvider passwordP
 
         //var queue = _cacheProvider.GetQueue<String>($"nodecmd:{node.Code}");
         //queue.Add(commandModel.ToJson());
-        await sessionManager.PublishAsync(code, commandModel, null, cancellationToken);
+        await _sessionManager.PublishAsync(code, commandModel, null, cancellationToken);
 
         // 挂起等待。借助redis队列，等待响应
         var timeout = model.Timeout;
         if (timeout > 0)
         {
-            var q = cacheProvider.GetQueue<CommandReplyModel>($"nodereply:{cmd.Id}");
+            var q = _cacheProvider.GetQueue<CommandReplyModel>($"nodereply:{cmd.Id}");
             var reply = await q.TakeOneAsync(timeout, cancellationToken);
             if (reply != null)
             {
                 // 埋点
-                using var span = tracer?.NewSpan($"mq:NodeCommandReply", reply);
+                using var span = _tracer?.NewSpan($"mq:NodeCommandReply", reply);
 
                 if (reply.Status == CommandStatus.错误)
                     throw new Exception($"命令错误！{reply.Data}");
@@ -895,11 +940,11 @@ public class NodeService(ITokenService tokenService, IPasswordProvider passwordP
 
         // 通知命令发布者，指令已完成
         var topic = $"nodereply:{cmd.Id}";
-        var q = cacheProvider.GetQueue<CommandReplyModel>(topic);
+        var q = _cacheProvider.GetQueue<CommandReplyModel>(topic);
         q.Add(model);
 
         // 设置过期时间，过期自动清理
-        cacheProvider.Cache.SetExpire(topic, TimeSpan.FromSeconds(60));
+        _cacheProvider.Cache.SetExpire(topic, TimeSpan.FromSeconds(60));
 
         return 1;
     }
@@ -946,7 +991,7 @@ public class NodeService(ITokenService tokenService, IPasswordProvider passwordP
 
     public override IOnlineModel QueryOnline(String sessionId) => NodeOnline.FindBySessionId(sessionId, true);
 
-    protected override String GetSessionId(DeviceContext context) => context.ClientId ?? base.GetSessionId(context);
+    protected override String GetSessionId(DeviceContext context) => context.Code ?? base.GetSessionId(context);
 
     private CommandModel BuildCommand(Node node, NodeCommand cmd)
     {
